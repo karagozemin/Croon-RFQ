@@ -44,9 +44,9 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-# Base-agent fallback roster (ids match MockCapClient / real base agents).
+# Base-agent fallback roster for MOCK mode (ids match MockCapClient).
 # Ordered by preference; first available wins.
-_FALLBACK_AGENTS = [
+_MOCK_FALLBACK_AGENTS = [
     AgentInfo(
         agent_id="base_listing_copy",
         name="CROON Listing Copy Agent",
@@ -64,6 +64,33 @@ _FALLBACK_AGENTS = [
         is_base_agent=True,
     ),
 ]
+
+
+def _fallback_agents(settings) -> list[AgentInfo]:
+    """Resolve the fallback provider roster (§7) for the active CAP mode.
+
+    - mock : the built-in base agents modeled in MockCapClient.
+    - live : OUR base agent identified by CROON_FALLBACK_* env vars. It must be
+             a real, hireable CAP service (has a Store service_id), otherwise
+             hire_and_pay cannot negotiate it.
+    """
+    if not settings.is_live:
+        return _MOCK_FALLBACK_AGENTS
+    if not settings.fallback_service_id or not settings.fallback_agent_id:
+        return []  # no configured fallback -> engine surfaces a clear RunError
+    return [
+        AgentInfo(
+            agent_id=settings.fallback_agent_id,
+            name=settings.fallback_agent_name,
+            category=None,
+            listed_price_usdc=Decimal("0.05"),
+            listed_eta_seconds=15,
+            reputation=0.60,
+            is_base_agent=True,
+            service_id=settings.fallback_service_id,
+        )
+    ]
+
 
 
 class RunError(Exception):
@@ -111,7 +138,10 @@ async def execute_run(
         acceptance_criteria=order.acceptance_criteria,
     )
 
+    fallback_roster = _fallback_agents(settings)
+
     try:
+
         # --- Layer C: discover candidates ---------------------------------
         candidates = await cap.discover_agents(
             category=order.category, limit=order.max_agents_to_query
@@ -138,11 +168,12 @@ async def execute_run(
                 ),
             )
             quotes = await _collect_quotes(
-                cap, _FALLBACK_AGENTS, task, settings.rfq_timeout_seconds, emit,
+                cap, fallback_roster, task, settings.rfq_timeout_seconds, emit,
                 is_fallback=True,
             )
             fallback_used = True
             if len(quotes) < 1:
+
                 raise RunError("no quotes even from fallback providers")
 
         # --- Layer C: score + select --------------------------------------
@@ -163,9 +194,10 @@ async def execute_run(
                     ),
                 )
                 fb_quotes = await _collect_quotes(
-                    cap, _FALLBACK_AGENTS, task,
+                    cap, fallback_roster, task,
                     settings.rfq_timeout_seconds, emit, is_fallback=True,
                 )
+
                 fallback_used = True
                 selection = score_quotes(fb_quotes, order.budget_per_run_usdc)
                 emit(
@@ -188,7 +220,8 @@ async def execute_run(
         )
 
         # --- Layer D: hire winner + pay USDC on Base ----------------------
-        winner_info = _find_agent(candidates + _FALLBACK_AGENTS, winner.agent_id)
+        winner_info = _find_agent(candidates + fallback_roster, winner.agent_id)
+
         emit("payment_pending", agent_name=winner.agent_name)
         settlement = await cap.hire_and_pay(
             winner_info, task, winner.price_usdc

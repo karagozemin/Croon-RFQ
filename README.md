@@ -83,8 +83,12 @@ This repo currently implements **Build Order steps 1–3** (spec §11):
       standing order → `run_now` → collect mock quotes → score → select → pay
       (mock) → build receipt → store run.
 - [x] **Step 3** — Demo UI rendering the mini-RFQ moment + run history.
-- [ ] **Step 4** — Real `CapClient` wired to the live CROO CAP SDK (blocked on
-      the SDK docs link + wallet/env values — see *Live mode* below).
+- [~] **Step 4** — Real `CapClient` (`LiveCapClient`) wired to the official
+      CROO CAP Python SDK (`croo-sdk`). Method mapping is confirmed and coded
+      (see *The CapClient boundary* below). Remaining: an SDK key
+      (`croo_sk_...`), a USDC-funded AA wallet, and one real end-to-end paid run
+      on Base to capture a BaseScan tx hash — these need live credentials from
+      the operator.
 - [ ] **Steps 5–7** — Fallback timeout mechanism, the two base agents, hardening.
 
 Everything below runs **without any network or keys** thanks to `MockCapClient`.
@@ -125,7 +129,7 @@ mini-RFQ: quotes arrive → scoring → winner → payment → receipt.
 
 ```
 CROON_CAP_MODE=mock   # deterministic fake agents, no network, no keys (default)
-CROON_CAP_MODE=live   # real CROO CAP SDK — NOT wired until step 4
+CROON_CAP_MODE=live   # real CROO CAP SDK (needs croo_sk_ key + funded wallet)
 ```
 
 The entire pipeline is identical in both modes because everything CAP-related is
@@ -147,9 +151,17 @@ See `.env.example` for the full list. Highlights:
 | `CROON_RFQ_TIMEOUT_SECONDS`  | `10`                 | Per-run RFQ timeout → triggers fallback.       |
 | `CROON_W_PRICE/W_REP/W_SPEED`| `0.4/0.35/0.25`      | Scoring weights (documented below).            |
 
-Live-only vars (`CROON_CAP_API_KEY`, `CROON_AGENT_WALLET_PRIVATE_KEY`,
-`CROON_BASE_RPC_URL`, `CROON_USDC_CONTRACT_ADDRESS`) are left blank until step 4;
-exact names will be confirmed against the official SDK docs before use.
+Live-only vars (used only when `CROON_CAP_MODE=live`):
+
+| Var                          | Purpose                                                      |
+| ---------------------------- | ----------------------------------------------------------- |
+| `CROON_CROO_SDK_KEY`         | `croo_sk_...` key from the CROO Dashboard (sent as `X-SDK-Key`). |
+| `CROON_CROO_API_URL`         | CROO CAP API base URL.                                       |
+| `CROON_CROO_WS_URL`          | CROO CAP WebSocket URL (order/negotiation events).          |
+| `CROON_BASE_RPC_URL`         | Base RPC endpoint for on-chain USDC settlement.             |
+| `CROON_LIVE_CANDIDATES_JSON` | JSON roster of Store service ids used as RFQ candidates (the SDK has no discovery). |
+
+These are read by `LiveCapClient`; in mock mode they can stay blank.
 
 ---
 
@@ -235,19 +247,34 @@ class CapClient:
 
 - **`MockCapClient`** — deterministic fake agents (Alpha, Beta, plus base-agent
   fallbacks). Lets us build and test the entire pipeline offline.
-- **`LiveCapClient`** — wraps the real CROO CAP SDK. Any uncertainty about real
-  method names/signatures is isolated here (and only here), each behind a `TODO`
-  with a doc link, to be confirmed against the official SDK before step 4.
+- **`LiveCapClient`** — wraps the real CROO CAP Python SDK (`croo-sdk`). All
+  uncertainty about the SDK lives here and nowhere else; the SDK is imported
+  **lazily** so mock mode never requires it to be installed.
 
-> **CAP SDK method names used:** _to be filled in at step 4 after confirming
-> against the official CROO CAP SDK docs._ No SDK methods are invented; if a
-> method is uncertain it stays behind this wrapper with a TODO.
+### Exact CAP SDK methods used (live mode)
+
+Auth: `AgentClient(Config(base_url, ws_url, rpc_url), "croo_sk_...")` — the key
+is sent as the `X-SDK-Key` header. Our interface maps onto the SDK **as the
+requester** like this:
+
+| CROON interface (`CapClient`) | CROO CAP SDK call(s)                                   | Notes |
+| ----------------------------- | ------------------------------------------------------ | ----- |
+| `discover_agents()`           | *(none — not an SDK primitive)*                        | The SDK has **no** search/discovery; accounts & services are set up in the Agent Store. Candidates therefore come from a **configured roster** of Store service ids (`CROON_LIVE_CANDIDATES_JSON`). Documented as honest emulation (spec §4). |
+| `request_quote()`             | *(none — derived)*                                     | CAP has **no native quote primitive**. A quote is **derived** from the candidate's listed price / SLA. We deliberately do **not** open a negotiation just to quote (that creates dangling on-chain state + gas). |
+| `hire_and_pay()`              | `negotiate_order()` → *(provider accepts)* → `get_negotiation()` (poll for `order_id`) → `pay_order(order_id)` | The real negotiation + **USDC-on-Base settlement** happens here, for the winner only. SDK auto-handles the ERC-20 approve. |
+| `get_delivery()`              | `get_delivery(order_id)`                               | Returns the hired agent's work product (`deliverable_text`). |
+
+Minor field-name variance across SDK versions is absorbed by a single `_attr()`
+helper in `cap_client.py` (again, isolated to this one file). The two spots that
+still need version confirmation against the installed build are marked with
+`TODO(verify)` — specifically the `negotiate_order` request shape.
 
 ### Payment precondition (live mode)
 
 Before CROON can pay providers, **CROON's own agent (AA) wallet must be funded
-with USDC on Base.** This is a hard precondition for live runs and will be
-documented with exact funding steps once the SDK/wallet setup is confirmed.
+with USDC on Base.** If it isn't, `pay_order` raises an insufficient-balance
+error (`is_insufficient_balance`). Fund the AA wallet address shown in the CROO
+Dashboard with USDC on Base before attempting a live run.
 
 ---
 
@@ -280,9 +307,10 @@ Croon-RFQ/
 
 ## Known limitations
 
-- **Live CAP not wired yet.** Only `MockCapClient` is functional; real
-  on-chain USDC settlement, the two base agents, and the fallback timeout path
-  arrive in build-order steps 4–7.
+- **Live CAP coded but not yet run on-chain.** `LiveCapClient` is wired to the
+  real `croo-sdk`, but a real paid run needs an SDK key + USDC-funded AA wallet
+  (operator-supplied). The two base agents and the fallback timeout path arrive
+  in build-order steps 5–7. Mock mode is fully functional today.
 - **Scheduler is demo-grade.** A single in-process interval loop, not durable
   production cron; jobs don't survive restarts mid-run.
 - **Reputation is a placeholder** (quote confidence), not a real oracle — by

@@ -234,36 +234,202 @@ class MockCapClient(CapClient):
 
 
 class LiveCapClient(CapClient):
-    """Adapter to the real CROO CAP SDK.
+    """Adapter to the real CROO CAP SDK (`croo-sdk`, PyPI).
 
-    TODO(step 4): Wire against the official CROO CAP SDK.
-      - Confirm REAL method names/signatures, auth/key setup, wallet funding
-        requirement, and event names from the official docs (link in README).
-      - CROON's AA wallet must be funded with USDC on Base before hire_and_pay.
-      - Map request_quote onto CAP's negotiation phase, or DERIVE a quote from
-        the agent's listed price/SLA if no native quote primitive exists.
-    Until then this raises clearly so nobody accidentally runs it half-wired.
+    Wired against the official Python SDK Reference. Mapping of our interface
+    onto the real SDK (as REQUESTER):
+
+      discover_agents  -> NOT an SDK primitive. The SDK has no search/discovery
+                          (account & service setup live in the Agent Store). So
+                          candidates come from a CONFIGURED roster of Store
+                          service ids (CROON_LIVE_CANDIDATES_JSON). Honest and
+                          documented (README §CAP mapping).
+
+      request_quote    -> CAP has NO native quote primitive. We DERIVE a quote
+                          from the candidate's listed price / SLA (spec §4).
+                          We deliberately do NOT open a negotiation just to
+                          quote (that would create dangling on-chain state and
+                          cost gas). The real negotiation happens in
+                          hire_and_pay for the winner only.
+
+      hire_and_pay     -> negotiate_order(req)  [requester initiates]
+                          -> provider accept_negotiation -> ORDER_CREATED
+                          -> pay_order(order_id)  [USDC on Base, auto-approve]
+                          -> returns Settlement(order_id, tx_hash, ...)
+
+      get_delivery     -> get_delivery(order_id) -> Delivery(deliverable_text)
+
+    PRECONDITION: CROON's AA wallet must be funded with USDC on Base before
+    pay_order, otherwise the SDK raises an insufficient-balance error
+    (is_insufficient_balance). See README §Wallet funding.
+
+    Auth: AgentClient(config, "croo_sk_...") via X-SDK-Key header.
     """
+
+    # How long to wait for the provider to accept the negotiation before we
+    # give up (engine will then route to fallback). Kept modest for demos.
+    _ACCEPT_TIMEOUT_S = 30
+    _POLL_INTERVAL_S = 1.5
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        # from croo_cap_sdk import CapSDK  # TODO(step 4): real import
-        raise NotImplementedError(
-            "LiveCapClient is not wired yet. Use CROON_CAP_MODE=mock. "
-            "Wiring happens in build step 4 after confirming the CAP SDK docs."
+        if not settings.croo_sdk_key:
+            raise RuntimeError(
+                "CROON_CROO_SDK_KEY is required for live mode (croo_sk_... from "
+                "the CROO Dashboard). Set it in .env or use CROON_CAP_MODE=mock."
+            )
+        # Imported lazily so mock mode never needs the SDK installed.
+        from croo import AgentClient, Config  # type: ignore
+
+        self._config = Config(
+            base_url=settings.croo_api_url,
+            ws_url=settings.croo_ws_url,
+            rpc_url=settings.base_rpc_url,
+        )
+        self._client = AgentClient(self._config, settings.croo_sdk_key)
+
+    async def discover_agents(
+        self, category: str | None, limit: int
+    ) -> list[AgentInfo]:
+        # SDK has no discovery — build candidates from the configured roster.
+        agents: list[AgentInfo] = []
+        for r in self.settings.live_candidates:
+            price = r.get("listed_price_usdc")
+            agents.append(
+                AgentInfo(
+                    agent_id=r["agent_id"],
+                    name=r.get("name", r["agent_id"]),
+                    category=r.get("category"),
+                    listed_price_usdc=Decimal(str(price)) if price is not None else None,
+                    reputation=float(r.get("reputation", 0.5)),
+                    is_base_agent=bool(r.get("is_base_agent", False)),
+                    service_id=r.get("service_id"),
+                    listed_eta_seconds=r.get("listed_eta_seconds"),
+                )
+            )
+        if category:
+            filtered = [a for a in agents if a.category == category]
+            agents = filtered or agents
+        return agents[:limit]
+
+    async def request_quote(
+        self, agent: AgentInfo, task: TaskSpec, timeout_s: int
+    ) -> Quote | None:
+        # DERIVED quote (spec §4): use the candidate's listed price/SLA as its
+        # bid. No on-chain action here — quoting must be cheap and side-effect
+        # free; only the winner is actually negotiated + paid.
+        if agent.listed_price_usdc is None:
+            return None
+        return Quote(
+            agent_id=agent.agent_id,
+            agent_name=agent.name,
+            price_usdc=agent.listed_price_usdc,
+            eta_seconds=agent.listed_eta_seconds or 60,
+            confidence=agent.reputation,
+            is_base_agent=agent.is_base_agent,
         )
 
-    async def discover_agents(self, category, limit):  # pragma: no cover
-        raise NotImplementedError
+    async def hire_and_pay(
+        self, agent: AgentInfo, task: TaskSpec, agreed_price_usdc: Decimal
+    ) -> Settlement:
+        if not agent.service_id:
+            raise RuntimeError(
+                f"Live candidate '{agent.agent_id}' has no service_id; cannot "
+                "negotiate. Add it to CROON_LIVE_CANDIDATES_JSON."
+            )
 
-    async def request_quote(self, agent, task, timeout_s):  # pragma: no cover
-        raise NotImplementedError
+        # 1) Requester initiates the negotiation for the winning service.
+        # TODO(verify): confirm the exact request dataclass/fields for
+        # negotiate_order in the installed croo-sdk build (see provider.py /
+        # requester.py examples). We pass a dict; the SDK accepts a request
+        # object — adjust field names here if the SDK errors on unknown keys.
+        neg = await self._client.negotiate_order(
+            {
+                "service_id": agent.service_id,
+                "agent_id": agent.agent_id,
+                "price": str(agreed_price_usdc),
+                "requirement": task.task_prompt,
+                "acceptance_criteria": task.acceptance_criteria,
+            }
+        )
+        negotiation_id = _attr(neg, "negotiation_id", "id")
 
-    async def hire_and_pay(self, agent, task, agreed_price_usdc):  # pragma: no cover
-        raise NotImplementedError
+        # 2) Wait for the provider to accept -> on-chain Order is created.
+        order_id = await self._await_order_created(negotiation_id)
 
-    async def get_delivery(self, order_id):  # pragma: no cover
-        raise NotImplementedError
+        # 3) Pay the order in USDC on Base (SDK auto-handles ERC20 approve).
+        pay = await self._client.pay_order(order_id)
+        tx_hash = _attr(pay, "tx_hash", "transaction_hash", "hash", default=None)
+
+        return Settlement(
+            order_id=str(order_id),
+            agent_id=agent.agent_id,
+            amount_paid_usdc=agreed_price_usdc,
+            tx_hash=tx_hash,
+            settled_at=datetime.now(timezone.utc),
+        )
+
+    async def get_delivery(self, order_id: str) -> Delivery:
+        delivery = await self._client.get_delivery(order_id)
+        text = _attr(
+            delivery, "deliverable_text", "output_text", "text", default=""
+        )
+        return Delivery(
+            order_id=str(order_id),
+            output_text=str(text or ""),
+            delivered_at=datetime.now(timezone.utc),
+        )
+
+    async def close(self) -> None:
+        """Release SDK HTTP/WebSocket connections."""
+        try:
+            await self._client.close()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            pass
+
+    # --- helpers -----------------------------------------------------------
+
+    async def _await_order_created(self, negotiation_id: str) -> str:
+        """Poll the negotiation until the provider accepts and an Order exists.
+
+        We poll rather than rely on the WS callback to keep hire_and_pay a
+        simple awaitable. Times out -> caller routes to fallback (§7).
+        """
+        deadline = asyncio.get_event_loop().time() + self._ACCEPT_TIMEOUT_S
+        while asyncio.get_event_loop().time() < deadline:
+            neg = await self._client.get_negotiation(negotiation_id)
+            order_id = _attr(neg, "order_id", default=None)
+            status = str(_attr(neg, "status", default="") or "").lower()
+            if order_id:
+                return str(order_id)
+            if status in {"rejected", "expired"}:
+                raise RuntimeError(
+                    f"Negotiation {negotiation_id} {status} by provider."
+                )
+            await asyncio.sleep(self._POLL_INTERVAL_S)
+        raise TimeoutError(
+            f"Provider did not accept negotiation {negotiation_id} in "
+            f"{self._ACCEPT_TIMEOUT_S}s."
+        )
+
+
+def _attr(obj: object, *names: str, default: object = "__RAISE__") -> object:
+    """Read the first present attribute (or dict key) from an SDK object.
+
+    The SDK returns typed objects, but exact field names may vary slightly by
+    version. This keeps the adapter resilient and confines that uncertainty to
+    ONE place (per spec §4)."""
+    for n in names:
+        if isinstance(obj, dict) and n in obj:
+            return obj[n]
+        if hasattr(obj, n):
+            return getattr(obj, n)
+    if default != "__RAISE__":
+        return default
+    raise AttributeError(
+        f"None of {names} found on {type(obj).__name__}; check SDK version."
+    )
+
 
 
 # =============================================================================

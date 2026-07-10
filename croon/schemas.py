@@ -26,6 +26,11 @@ class AgentInfo(BaseModel):
     # SLA / reputation signal (0..1). Placeholder for MVP — see scoring.py.
     reputation: float = 0.5
     is_base_agent: bool = False  # True for OUR fallback providers (§7, §10)
+    # Live mode: the Store service to negotiate against, and the listed SLA used
+    # to DERIVE a quote (CAP has no native quote primitive — spec §4).
+    service_id: str | None = None
+    listed_eta_seconds: int | None = None
+
 
 
 class TaskSpec(BaseModel):

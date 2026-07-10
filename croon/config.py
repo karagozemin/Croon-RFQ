@@ -5,10 +5,11 @@ All secrets and tunables live here. Nothing is hardcoded elsewhere.
 
 from __future__ import annotations
 
-from decimal import Decimal
+import json
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 
 class Settings(BaseSettings):
@@ -42,15 +43,38 @@ class Settings(BaseSettings):
     w_rep: float = 0.35
     w_speed: float = 0.25
 
-    # LIVE mode only — confirm exact names against CAP SDK docs (step 4).
-    cap_api_key: str | None = None
-    agent_wallet_private_key: str | None = None
-    base_rpc_url: str | None = None
-    usdc_contract_address: str | None = None
+    # --- LIVE mode only (CROO CAP SDK — confirmed against Python SDK Reference) ---
+    # Auth: AgentClient(config, sdk_key). Key format `croo_sk_...`, from Dashboard.
+    croo_sdk_key: str | None = None            # -> CROON_CROO_SDK_KEY
+    croo_api_url: str = "https://api.croo.network"
+    croo_ws_url: str = "wss://api.croo.network/ws"
+    base_rpc_url: str = "https://mainnet.base.org"
+
+    # SDK has NO discovery primitive (account/service setup lives in the Store).
+    # So live candidates are a configured roster of Store service IDs. Quotes are
+    # DERIVED from each listed price/SLA (spec §4). JSON list of objects:
+    #   [{"agent_id","name","service_id","category",
+    #     "listed_price_usdc","listed_eta_seconds","reputation"}, ...]
+    live_candidates_json: str = "[]"           # -> CROON_LIVE_CANDIDATES_JSON
+
+    # OUR base agent used as the fallback provider (§7). Its Store service id.
+    fallback_service_id: str | None = None     # -> CROON_FALLBACK_SERVICE_ID
+    fallback_agent_id: str | None = None
+    fallback_agent_name: str = "CROON Fallback Provider"
 
     @property
     def is_live(self) -> bool:
         return self.cap_mode.strip().lower() == "live"
+
+    @property
+    def live_candidates(self) -> list[dict]:
+        """Parsed live candidate roster (see live_candidates_json)."""
+        try:
+            data = json.loads(self.live_candidates_json or "[]")
+            return data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            return []
+
 
 
 @lru_cache
