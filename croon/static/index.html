@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CROON RFQ — recurring-demand engine for CROO agents</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>CROON <span>RFQ</span></h1>
+      <span id="cap-mode" class="mode-badge">…</span>
+    </div>
+    <p class="pitch">
+      Every standing order is recurring demand. Every CROO agent is my supply.
+      <strong>On every run we re-open the market</strong> — quote, score, select, settle on-chain.
+      <em>This is not a cron job.</em>
+    </p>
+  </header>
+
+  <main>
+    <!-- LEFT: standing orders + create -->
+    <section class="col col-left">
+      <h2>Standing Orders</h2>
+      <ul id="order-list" class="order-list"></ul>
+
+      <details class="create-box">
+        <summary>+ New standing order</summary>
+        <form id="create-form">
+          <label>Name <input name="name" value="Wallet Risk Brief" required /></label>
+          <label>Task prompt
+            <textarea name="task_prompt" required>Produce a concise wallet risk brief for the treasury.</textarea>
+          </label>
+          <label>Category
+            <input name="category" value="risk" />
+          </label>
+          <div class="row">
+            <label>Budget/run (USDC)
+              <input name="budget_per_run_usdc" type="number" step="0.01" value="0.50" />
+            </label>
+            <label>Max total (USDC)
+              <input name="max_total_budget_usdc" type="number" step="0.01" value="5.00" />
+            </label>
+          </div>
+          <div class="row">
+            <label>Cadence (s)
+              <input name="cadence_seconds" type="number" value="300" />
+            </label>
+            <label>Max agents
+              <input name="max_agents_to_query" type="number" value="3" />
+            </label>
+          </div>
+          <button type="submit">Create</button>
+        </form>
+      </details>
+    </section>
+
+    <!-- CENTER: the mini-RFQ money shot -->
+    <section class="col col-center">
+      <div class="rfq-head">
+        <h2>Mini-RFQ Live</h2>
+        <div class="rfq-actions">
+          <button id="run-now-btn" disabled>▶ Run now</button>
+          <button id="pause-btn" class="ghost" disabled>⏸ Pause</button>
+        </div>
+      </div>
+
+      <div id="rfq-order-meta" class="order-meta muted">Select a standing order →</div>
+
+      <ol id="rfq-stream" class="rfq-stream"></ol>
+    </section>
+
+    <!-- RIGHT: run history -->
+    <section class="col col-right">
+      <h2>Run History</h2>
+      <div id="order-summary" class="order-summary muted">—</div>
+      <table class="run-table">
+        <thead>
+          <tr><th>#</th><th>Winner</th><th>Paid</th><th>Status</th><th>Tx</th></tr>
+        </thead>
+        <tbody id="run-rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
