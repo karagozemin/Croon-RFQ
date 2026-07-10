@@ -91,10 +91,16 @@ Everything below runs **without any network or keys** thanks to `MockCapClient`.
 
 ---
 
+## Prerequisites
+
+- **Python 3.11–3.13.** Use `python3.13` if it is available.
+  > **Environment note:** Python **3.14** currently ships with a broken
+  > `ensurepip`/wheel setup on some macOS installs (`python -m venv` fails at the
+  > pip bootstrap step). This is an environment quirk, not a project limitation —
+  > create the venv with `python3.13` and everything works.
+
 ## Quick start (single command)
 
-Requires **Python 3.11–3.13**. (Note: Python 3.14 currently has broken
-`ensurepip`/wheel availability on some macOS setups; use 3.13.)
 
 ```bash
 # 1. Create venv + install deps
@@ -282,8 +288,7 @@ Croon-RFQ/
 - **Reputation is a placeholder** (quote confidence), not a real oracle — by
   design (out of scope).
 - **Event bus is in-memory** and per-process; it resets on restart.
-- **Python 3.14** venv/ensurepip can be broken on some macOS installs — use
-  3.11–3.13.
+
 
 ---
 
