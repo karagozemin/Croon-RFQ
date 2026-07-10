@@ -128,6 +128,10 @@ class MockCapClient(CapClient):
     ) -> None:
         self.simulate_latency = simulate_latency
         self.fail_non_base_quotes = fail_non_base_quotes
+        # Remember order_id -> (agent_id, task) so get_delivery can produce the
+        # winner's REAL work product (base agents run their actual cores).
+        self._orders: dict[str, tuple[str, TaskSpec]] = {}
+
 
     async def discover_agents(
         self, category: str | None, limit: int
@@ -192,7 +196,10 @@ class MockCapClient(CapClient):
         tx_hash = "0x" + hashlib.sha256(
             (order_id + datetime.now(timezone.utc).isoformat()).encode()
         ).hexdigest()
+        # Remember who was hired so get_delivery can produce their real output.
+        self._orders[order_id] = (agent.agent_id, task)
         return Settlement(
+
             order_id=order_id,
             agent_id=agent.agent_id,
             amount_paid_usdc=agreed_price_usdc,
@@ -203,14 +210,36 @@ class MockCapClient(CapClient):
     async def get_delivery(self, order_id: str) -> Delivery:
         if self.simulate_latency:
             await asyncio.sleep(0.2)
+
+        agent_id, task = self._orders.get(order_id, (None, None))
+
+        # If one of OUR base agents was hired (typically the fallback path),
+        # produce its REAL work product by running the actual agent core. This
+        # is what makes the base agents genuine supply, not dead hedges (§7/§10).
+        if agent_id is not None:
+            from agents.provider import BASE_AGENTS
+
+            spec = BASE_AGENTS.get(agent_id)
+            if spec is not None:
+                params = dict(task.params or {}) if task else {}
+                prompt = task.task_prompt if task else ""
+                output = await spec.handler(prompt, params)
+                return Delivery(
+                    order_id=order_id,
+                    output_text=output,
+                    delivered_at=datetime.now(timezone.utc),
+                )
+
         return Delivery(
             order_id=order_id,
             output_text=(
-                f"[MOCK OUTPUT] Deliverable for {order_id}. "
-                "In live mode this is the hired agent's real work product."
+                f"[MOCK OUTPUT] Deliverable for {order_id}"
+                + (f" by {agent_id}" if agent_id else "")
+                + ". In live mode this is the hired agent's real work product."
             ),
             delivered_at=datetime.now(timezone.utc),
         )
+
 
     # --- helpers -----------------------------------------------------------
 
@@ -358,6 +387,10 @@ class LiveCapClient(CapClient):
         order_id = await self._await_order_created(negotiation_id)
 
         # 3) Pay the order in USDC on Base (SDK auto-handles ERC20 approve).
+        # TODO(verify): confirm the SDK settles in the NATIVE USDC configured at
+        # settings.usdc_contract_address (0x8335...2913), NOT bridged USDbC,
+        # before the first real payment. pay_order takes no token arg today; if a
+        # future SDK build exposes one, pass settings.usdc_contract_address here.
         pay = await self._client.pay_order(order_id)
         tx_hash = _attr(pay, "tx_hash", "transaction_hash", "hash", default=None)
 

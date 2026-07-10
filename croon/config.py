@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     croo_ws_url: str = "wss://api.croo.network/ws"
     base_rpc_url: str = "https://mainnet.base.org"
 
+    # Canonical native USDC on Base (NOT bridged USDbC). Confirmed via Coinbase
+    # CDP docs. TODO(verify): confirm CAP settles in THIS USDC, not USDbC
+    # (0xd9aA...) before the first live payment.
+    usdc_contract_address: str = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
     # SDK has NO discovery primitive (account/service setup lives in the Store).
     # So live candidates are a configured roster of Store service IDs. Quotes are
     # DERIVED from each listed price/SLA (spec §4). JSON list of objects:

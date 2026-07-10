@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field
+
 
 
 # --- CAP domain types (what CapClient returns) ------------------------------
@@ -39,6 +41,10 @@ class TaskSpec(BaseModel):
     task_prompt: str
     category: str | None = None
     acceptance_criteria: list[str] = Field(default_factory=list)
+    # Structured inputs for the hired agent (e.g. repo_url, rpc_url). Base-agent
+    # handlers read these; free-form prompts still work without them.
+    params: dict[str, Any] = Field(default_factory=dict)
+
 
 
 class Quote(BaseModel):

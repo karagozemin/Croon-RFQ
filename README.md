@@ -159,6 +159,7 @@ Live-only vars (used only when `CROON_CAP_MODE=live`):
 | `CROON_CROO_API_URL`         | CROO CAP API base URL.                                       |
 | `CROON_CROO_WS_URL`          | CROO CAP WebSocket URL (order/negotiation events).          |
 | `CROON_BASE_RPC_URL`         | Base RPC endpoint for on-chain USDC settlement.             |
+| `CROON_USDC_CONTRACT_ADDRESS`| Native USDC on Base (`0x8335…2913`). **Not** bridged USDbC — verify CAP settles in this token. |
 | `CROON_LIVE_CANDIDATES_JSON` | JSON roster of Store service ids used as RFQ candidates (the SDK has no discovery). |
 
 These are read by `LiveCapClient`; in mock mode they can stay blank.
@@ -269,12 +270,41 @@ helper in `cap_client.py` (again, isolated to this one file). The two spots that
 still need version confirmation against the installed build are marked with
 `TODO(verify)` — specifically the `negotiate_order` request shape.
 
+> **The missing price-discovery layer (a feature, not a fake auction).**
+> CAP today has **no native quote/discovery primitive** — agents publish a
+> price/SLA in the Agent Store, and that's it. CROON's mini-RFQ *adds the
+> layer CAP is missing*: it derives a quote from each candidate's listed
+> price/SLA, scores them, and settles competitively under budget. We say this
+> out loud in the demo. It is deliberately **not** a simulated auction with
+> invented bids — every number traces back to a real Store listing, and the
+> only on-chain action is the single winning payment.
+
 ### Payment precondition (live mode)
 
 Before CROON can pay providers, **CROON's own agent (AA) wallet must be funded
 with USDC on Base.** If it isn't, `pay_order` raises an insufficient-balance
 error (`is_insufficient_balance`). Fund the AA wallet address shown in the CROO
 Dashboard with USDC on Base before attempting a live run.
+
+### Safe go-live sequence (run this before spending a cent)
+
+The `croo_sk_...` mapping (`negotiate_order → get_negotiation → pay_order`) is
+coded but must be verified against the real `croo-sdk` source before a live
+payment. Follow this staged rollout:
+
+1. **Read-only first.** With `CROON_CAP_MODE=live`, exercise only discovery/
+   quote-emulation + `get_negotiation` polling. **No `pay_order` yet.** If auth
+   and negotiation resolve cleanly, the key/SDK wiring is correct.
+2. **One safe micro-run.** Trigger `run_now` with the smallest possible budget,
+   routing to **your own base agent as the winner** (self-hire = a controlled
+   first payment). Capture the tx and verify it on BaseScan.
+3. **Only if that tx is clean** → enable the fallback timeout (step 5) and
+   normal candidate runs.
+4. **Keep `CROON_CAP_MODE` flippable.** If the live net stalls on demo day, flip
+   back to `mock`. That safety net is the single most valuable asset here.
+
+> V1 Pioneers note: completing CAP integration testing (the micro-run above) is
+> reported to qualify for a $10 USDC reward — a free byproduct of go-live.
 
 ---
 
