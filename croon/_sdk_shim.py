@@ -11,10 +11,21 @@ fulfilment path — handler dispatch, idempotency, and the deliver_order call
 shape — to be exercisable offline (see tests/test_provider_worker.py, which
 drives it with a FakeClient).
 
-These shims mirror the SDK shapes CONFIRMED in the module docstring of
-provider_worker.py:
-    DeliverableType.TEXT == "text"
-    DeliverOrderRequest(deliverable_type, deliverable_schema="", deliverable_text="")
+These shims mirror the SDK shapes VERIFIED against croo-sdk==0.2.1
+(`.venv/.../croo/types.py`) on 2026-07-12:
+
+    class DeliverableType:            # NOTE: plain class, NOT an Enum
+        TEXT = "text"
+        SCHEMA = "schema"
+
+    @dataclass
+    class DeliverOrderRequest:
+        deliverable_type: str
+        deliverable_schema: str = ""
+        deliverable_text: str = ""
+
+Run `python scripts/verify_shim.py` in an env with `croo-sdk` installed to
+re-confirm these shapes; it exits non-zero on any drift.
 
 They are intentionally tiny value objects with NO behaviour and NO network. If
 the real SDK's field names ever change, the live import wins and this shim is
@@ -28,23 +39,31 @@ interaction still goes exclusively through CapClient / the live SDK.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 
 
-class DeliverableType(str, Enum):
-    """Mirror of croo.types.DeliverableType (only the values we emit)."""
+class DeliverableType:
+    """Mirror of croo.types.DeliverableType.
+
+    IMPORTANT: the real SDK defines this as a PLAIN class holding bare string
+    constants — NOT an Enum. We match that exactly so that a value emitted
+    offline (``DeliverableType.TEXT``) is the literal ``"text"`` string, byte-
+    identical to live. A ``str``-Enum member would serialize/repr differently
+    and could silently diverge in the delivery payload.
+    """
 
     TEXT = "text"
+    SCHEMA = "schema"
 
 
 @dataclass
 class DeliverOrderRequest:
     """Mirror of croo.types.DeliverOrderRequest (delivery payload).
 
-    Field names/defaults match the real SDK so the offline construction is
-    byte-for-byte compatible with the live call site.
+    Field names, order, types and defaults match the real SDK so the offline
+    construction is byte-for-byte compatible with the live call site.
     """
 
-    deliverable_type: DeliverableType
+    deliverable_type: str
     deliverable_schema: str = ""
     deliverable_text: str = ""
+

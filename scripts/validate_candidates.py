@@ -42,8 +42,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from croon.config import get_settings
 
+try:
+    # Our OWN provider identities. Any candidate colliding with these is a
+    # self-trade (CROON hiring itself) and triggers the anti-sybil flags
+    # (<3 unique counterparties + concentrated self-trade). Base agents are
+    # FALLBACK ONLY — never legitimate competitive candidates.
+    from agents.provider import ALL_AGENTS
+
+    _OWN_AGENT_IDS = set(ALL_AGENTS)
+except Exception:  # noqa: BLE001 — agents pkg optional at validation time
+    _OWN_AGENT_IDS = {"croon_recurring_rfq", "base_listing_copy", "base_gas_oracle"}
+
 REQUIRED = ("agent_id", "name", "service_id")
 RECOMMENDED = ("category", "listed_price_usdc", "listed_eta_seconds", "reputation")
+
 
 # Guidance from the owner: keep candidates cheap so one run can't drain the
 # wallet. Anything at/above this is flagged (not fatal, but loud).
@@ -89,10 +101,16 @@ def main() -> int:
 
     budget = _as_decimal(args.budget)
 
+    # Our own provider service_ids are self-trade too (not just agent_ids).
+    own_service_ids = set(get_settings().provider_service_map)
+
     errors: list[str] = []
     warnings: list[str] = []
     categories: set[str] = set()
+    seen_agent_ids: set[str] = set()
+    seen_service_ids: set[str] = set()
     under_budget = 0
+
 
     print(f"Validating {len(roster)} candidate(s)"
           + (f" against budget_per_run = {budget} USDC" if budget else "")
@@ -105,6 +123,36 @@ def main() -> int:
         for field in REQUIRED:
             if not c.get(field):
                 errors.append(f"[{tag}] missing required field '{field}'")
+
+        aid = (c.get("agent_id") or "").strip()
+        sid = (c.get("service_id") or "").strip()
+
+        # Anti-self-trade guard -------------------------------------------
+        # Candidates must be EXTERNAL third parties. Our own agents (main +
+        # base/fallback) hiring themselves = concentrated self-trade + fewer
+        # unique counterparties → anti-sybil flags. Base agents stay fallback
+        # ONLY; they must never appear in the competitive candidate pool.
+        if aid and aid in _OWN_AGENT_IDS:
+            errors.append(
+                f"[{tag}] agent_id '{aid}' is one of OUR OWN agents — self-trade. "
+                "Base agents are fallback-only, never RFQ candidates."
+            )
+        if sid and sid in own_service_ids:
+            errors.append(
+                f"[{tag}] service_id '{sid}' is one of OUR OWN provider services — "
+                "self-trade. Use an EXTERNAL third-party agent."
+            )
+
+        # Duplicate guard: repeated ids fake diversity but are one counterparty.
+        if aid:
+            if aid in seen_agent_ids:
+                errors.append(f"[{tag}] duplicate agent_id '{aid}' — not a distinct counterparty")
+            seen_agent_ids.add(aid)
+        if sid:
+            if sid in seen_service_ids:
+                errors.append(f"[{tag}] duplicate service_id '{sid}' — not a distinct counterparty")
+            seen_service_ids.add(sid)
+
 
         # Recommended (scoring quality) ------------------------------------
         for field in RECOMMENDED:
