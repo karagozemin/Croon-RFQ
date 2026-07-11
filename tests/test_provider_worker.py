@@ -24,7 +24,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from agents.provider import BASE_AGENTS
+from agents.provider import ALL_AGENTS, BASE_AGENTS, CROON_RFQ_AGENT
+
 from croon.config import Settings
 from croon.provider_worker import ProviderWorker
 
@@ -140,7 +141,41 @@ def test_status_shape():
         "started": False,
         "ready": False,
         "served_services": {},
+        "served_kinds": {},
+        "serving_main": False,
     }
+
+
+# --- Main CROON RFQ service (the product itself, sold on the Store) ---------
+
+
+def test_main_service_registered_and_kind():
+    # The main brokerage service must be servable and clearly marked "main".
+    assert "croon_recurring_rfq" in ALL_AGENTS
+    assert CROON_RFQ_AGENT.kind == "main"
+    # Base agents remain "base" and are still part of the full registry.
+    assert all(BASE_AGENTS[s].kind == "base" for s in BASE_AGENTS)
+    assert set(ALL_AGENTS) == {"croon_recurring_rfq", *BASE_AGENTS}
+
+
+def test_worker_resolves_main_service_and_reports_it():
+    sid = "svc_croon_main"
+    w = ProviderWorker(
+        _settings(provider_service_map_json=f'{{"{sid}": "croon_recurring_rfq"}}')
+    )
+    assert w.served_services == {sid: "croon_recurring_rfq"}
+    status = w.status()
+    assert status["served_kinds"] == {sid: "main"}
+    assert status["serving_main"] is True
+
+
+def test_config_example_includes_main_service():
+    from croon.provider_worker import _config_example
+
+    text = _config_example()
+    assert "croon_recurring_rfq" in text  # product itself is mappable
+    assert "main" in text                 # kind is documented for the operator
+
 
 
 # --- start() guards (never import the real SDK / open a socket) -------------

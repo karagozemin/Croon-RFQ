@@ -55,8 +55,9 @@ import asyncio
 import logging
 
 
-from agents.provider import BASE_AGENTS, AgentSpec
+from agents.provider import ALL_AGENTS, BASE_AGENTS, AgentSpec
 from croon.config import Settings, get_settings
+
 
 logger = logging.getLogger("croon.provider")
 
@@ -115,28 +116,47 @@ class ProviderWorker:
         """{service_id: agent_spec_id} actually being served."""
         return {sid: spec.agent_id for sid, spec in self._service_specs.items()}
 
+    @property
+    def served_kinds(self) -> dict[str, str]:
+        """{service_id: kind} — 'main' (CROON RFQ brokerage) vs 'base' (fallback).
+
+        Lets /health and readiness show, at a glance, whether the product itself
+        is being served or only its base agents.
+        """
+        return {sid: spec.kind for sid, spec in self._service_specs.items()}
+
     def status(self) -> dict:
         return {
             "enabled": self.enabled,
             "started": self._started,
             "ready": self._ready,
             "served_services": self.served_services,
+            "served_kinds": self.served_kinds,
+            "serving_main": "main" in self.served_kinds.values(),
         }
+
 
     # --- Setup --------------------------------------------------------------
 
     def _resolve_services(self) -> None:
-        """Map configured Store service_ids -> local AgentSpec cores."""
+        """Map configured Store service_ids -> local AgentSpec cores.
+
+        Resolves against ALL_AGENTS (the main CROON RFQ brokerage service PLUS
+        the two base/fallback agents) so the product itself is hireable on the
+        Store — not just its base agents. Unknown spec ids are skipped with a
+        loud warning rather than silently serving nothing.
+        """
         for service_id, spec_id in self._settings.provider_service_map.items():
-            spec = BASE_AGENTS.get(spec_id)
+            spec = ALL_AGENTS.get(spec_id)
             if spec is None:
                 logger.warning(
                     "provider: service_map references unknown agent spec '%s' "
                     "(service_id=%s); known specs=%s",
-                    spec_id, service_id, list(BASE_AGENTS),
+                    spec_id, service_id, list(ALL_AGENTS),
                 )
                 continue
             self._service_specs[service_id] = spec
+
 
     # --- Lifecycle ----------------------------------------------------------
 
@@ -511,8 +531,12 @@ def _config_example() -> str:
     """
     import json
 
-    spec_ids = list(BASE_AGENTS)
+    # Include EVERY servable spec: the main CROON RFQ brokerage service (kind
+    # "main") plus the two base/fallback agents (kind "base"). Mapping the main
+    # service is what makes the product itself hireable on the Store.
+    spec_ids = list(ALL_AGENTS)
     example_map = {f"<STORE_SERVICE_ID_FOR_{sid}>": sid for sid in spec_ids}
+    kind_notes = ", ".join(f"{sid}={ALL_AGENTS[sid].kind}" for sid in spec_ids)
     lines = [
         "# --- CROON provider (supply side) env example --------------------",
         "# Fill placeholders with real values in your .env (never commit it).",
@@ -525,11 +549,13 @@ def _config_example() -> str:
         "BASE_RPC_URL=https://mainnet.base.org",
         "CROO_SDK_KEY=<YOUR_SECRET_SDK_KEY>   # from Dashboard; keep secret",
         "",
-        "# Map each owned Store service_id -> local core. Known local specs:",
-        f"#   {spec_ids}",
+        "# Map each owned Store service_id -> local core. Known local specs",
+        f"#   (kind): {kind_notes}",
+        "# 'main' = the CROON RFQ product itself; 'base' = fallback providers.",
         "CROON_PROVIDER_SERVICE_MAP_JSON='" + json.dumps(example_map) + "'",
     ]
     return "\n".join(lines)
+
 
 
 # --- CLI --------------------------------------------------------------------
