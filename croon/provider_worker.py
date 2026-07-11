@@ -490,7 +490,8 @@ class ProviderWorker:
             return report
 
         from croo import AgentClient, Config  # type: ignore
-        from croo.types import EventType  # type: ignore
+        from croo.types import EventType, ListOptions  # type: ignore
+
 
         config = Config(
             base_url=self._settings.croo_api_url,
@@ -500,12 +501,19 @@ class ProviderWorker:
         client = AgentClient(config, self._settings.croo_sdk_key)
         stream = None
         try:
-            # Read-only auth probes.
-            negs = await client.list_negotiations()
+            # Read-only auth probes. CONFIRMED against the live API: BOTH list
+            # endpoints REQUIRE an explicit role or they 400 with
+            # INVALID_PARAMETERS. The two endpoints use DIFFERENT vocabularies:
+            #   list_negotiations -> role in {"requester", "provider"}
+            #   list_orders       -> role in {"buyer",     "provider"}
+            # This worker is the SELLER, so we probe the "provider" role, which
+            # is valid for both.
+            negs = await client.list_negotiations(ListOptions(role="provider"))
             report["list_negotiations"] = f"OK ({len(negs)})"
-            orders = await client.list_orders()
+            orders = await client.list_orders(ListOptions(role="provider"))
             report["list_orders"] = f"OK ({len(orders)})"
             report["authentication"] = "OK"
+
 
             # Connect + register, then immediately tear down. We register the
             # real handlers to confirm wiring, but close the socket before the

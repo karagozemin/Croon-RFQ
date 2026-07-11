@@ -481,16 +481,23 @@ class LiveCapClient(CapClient):
     ) -> str | None:
         """Match the on-chain Order back to its negotiation via list_orders.
 
-        We scan our REQUESTER-role orders (most recent first) and match on the
+        We scan our BUYER-role orders (most recent first) and match on the
         order's negotiation_id. Only a handful of orders exist per demo, so a
         small page is plenty.
+
+        CONFIRMED against the live API: list_orders REQUIRES role in
+        {"buyer", "provider"} and 400s (INVALID_PARAMETERS "role must be
+        'buyer' or 'provider'") on anything else — note this is a DIFFERENT
+        vocabulary from list_negotiations, which uses {"requester","provider"}.
+        As the purchaser we are the "buyer" here.
         """
         opts = list_options_cls(
-            role="requester",
+            role="buyer",
             agent_id=self._requester_agent_id or None,
             page=1,
             page_size=50,
         )
+
         orders = await self._client.list_orders(opts)
         for order in orders or []:
             if str(_attr(order, "negotiation_id", default="")) == str(
