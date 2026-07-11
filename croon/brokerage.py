@@ -22,10 +22,18 @@ Two hard safety properties (both tested):
     never drain CROON's agent wallet. The effective budget is
     min(buyer_budget, CROON_MAX_CHILD_SPEND_USDC).
 
-  * IDEMPOTENCY (parent order id): paying a child spends real USDC, and a WS
-    reconnect can replay ORDER_PAID. We key on the PARENT order id: the child
-    cycle runs at most once per parent order; a replay returns the cached
-    deliverable without paying again.
+  * IDEMPOTENCY (parent order id, DURABLE): paying a child spends real USDC, and
+    a WS reconnect can replay ORDER_PAID — including ACROSS A PROVIDER RESTART.
+    An in-memory cache cannot survive a restart, so idempotency is anchored in
+    SQLite via the `BrokerageOrder` table. Each parent order transitions
+    claimed -> settled (child paid, tx recorded) -> completed (deliverable
+    stored). A replay at any stage NEVER pays a second child:
+      - completed -> return the stored deliverable verbatim
+      - settled   -> the child was already paid before a crash; re-fetch its
+                     delivery and rebuild the deliverable WITHOUT paying again
+      - claimed/failed -> no spend occurred; safe to (re)run the cycle
+    An in-process per-parent lock additionally serialises concurrent replays
+    within a single process.
 
 All CAP interaction still goes exclusively through CapClient (spec §4/§13); this
 module orchestrates, it never touches the SDK directly.
@@ -38,9 +46,13 @@ import json
 import logging
 from decimal import Decimal
 
+from sqlmodel import Session
+
 from croon import engine
 from croon.cap_client import CapClient, build_cap_client
 from croon.config import Settings, get_settings
+from croon.db import engine as _db_engine
+from croon.models import BrokerageOrder
 from croon.schemas import TaskSpec
 
 from croon.scoring import score_quotes
@@ -52,12 +64,11 @@ logger = logging.getLogger("croon.brokerage")
 _MAIN_AGENT_ID = "croon_recurring_rfq"
 
 
-# --- Idempotency (parent order id -> completed deliverable) ------------------
-# In-memory is sufficient: the provider worker is a single process, and the
-# point is to avoid double-paying a child across ORDER_PAID replays within that
-# process. A per-parent lock serialises concurrent replays; the results cache
-# short-circuits any later duplicate.
-_RESULTS: dict[str, str] = {}
+# --- In-process serialisation (per parent order) ----------------------------
+# The DURABLE idempotency key is the `BrokerageOrder` row (survives restarts).
+# This lock only serialises concurrent replays WITHIN one process so two coroutines
+# can't both read "not completed" and both start a child cycle before either
+# commits its claim.
 _LOCKS: dict[str, asyncio.Lock] = {}
 _REGISTRY_LOCK = asyncio.Lock()
 
@@ -69,6 +80,68 @@ async def _lock_for(parent_order_id: str) -> asyncio.Lock:
             lock = asyncio.Lock()
             _LOCKS[parent_order_id] = lock
         return lock
+
+
+# --- Durable idempotency store (SQLite via BrokerageOrder) -------------------
+def _load_order(parent_order_id: str) -> BrokerageOrder | None:
+    with Session(_db_engine) as session:
+        return session.get(BrokerageOrder, parent_order_id)
+
+
+def _claim_order(parent_order_id: str) -> None:
+    """Ensure a `claimed` row exists for this parent (no spend implied)."""
+    with Session(_db_engine) as session:
+        row = session.get(BrokerageOrder, parent_order_id)
+        if row is None:
+            row = BrokerageOrder(parent_order_id=parent_order_id, status="claimed")
+        else:
+            row.status = "claimed"
+            row.updated_at = engine._now()
+        session.add(row)
+        session.commit()
+
+
+def _mark_settled(
+    parent_order_id: str, child_order_id: str, child_tx_hash: str | None
+) -> None:
+    """Persist that the child was HIRED + PAID, BEFORE assembling delivery.
+
+    This is the crash-safety linchpin: once this commits, a replay can never pay
+    a second child — it recovers via `settled` instead.
+    """
+    with Session(_db_engine) as session:
+        row = session.get(BrokerageOrder, parent_order_id) or BrokerageOrder(
+            parent_order_id=parent_order_id
+        )
+        row.status = "settled"
+        row.child_order_id = child_order_id
+        row.child_tx_hash = child_tx_hash
+        row.updated_at = engine._now()
+        session.add(row)
+        session.commit()
+
+
+def _mark_completed(parent_order_id: str, deliverable: str) -> None:
+    with Session(_db_engine) as session:
+        row = session.get(BrokerageOrder, parent_order_id) or BrokerageOrder(
+            parent_order_id=parent_order_id
+        )
+        row.status = "completed"
+        row.deliverable = deliverable
+        row.updated_at = engine._now()
+        session.add(row)
+        session.commit()
+
+
+def _mark_failed(parent_order_id: str) -> None:
+    with Session(_db_engine) as session:
+        row = session.get(BrokerageOrder, parent_order_id) or BrokerageOrder(
+            parent_order_id=parent_order_id
+        )
+        row.status = "failed"
+        row.updated_at = engine._now()
+        session.add(row)
+        session.commit()
 
 
 def _params_budget(params: dict, settings: Settings) -> Decimal:
@@ -93,35 +166,57 @@ async def execute_main_brokerage_order(
     """Run ONE competitive child cycle for an inbound paid MAIN order.
 
     Returns the buyer-facing deliverable text (a proof-bundled brokerage
-    receipt). Idempotent on `parent_order_id`: the child is hired+paid at most
-    once; a replay returns the cached deliverable.
+    receipt). DURABLY idempotent on `parent_order_id`: the child is hired+paid at
+    most once even across a provider restart; a replay returns the stored
+    deliverable (or rebuilds it from an already-settled child without re-paying).
     """
     settings = settings or get_settings()
     params = dict(params or {})
 
     lock = await _lock_for(parent_order_id)
     async with lock:
-        cached = _RESULTS.get(parent_order_id)
-        if cached is not None:
+        existing = _load_order(parent_order_id)
+
+        if existing is not None and existing.status == "completed":
             logger.info(
-                "brokerage: parent order=%s already fulfilled; returning cached "
+                "brokerage: parent order=%s already completed; returning stored "
                 "deliverable (no re-payment)",
                 parent_order_id,
             )
-            return cached
+            return existing.deliverable
 
-        # Build a CapClient if the caller didn't inject one. If we built it and
-        # it owns network resources, close it when done.
         owns_cap = cap is None
         cap = cap or build_cap_client(settings)
         try:
-            deliverable = await _run_child_cycle(
+            if existing is not None and existing.status == "settled":
+                # Child was PAID before a crash/replay. Recover the deliverable
+                # WITHOUT paying again.
+                logger.warning(
+                    "brokerage: parent order=%s found in 'settled' state "
+                    "(child_order=%s tx=%s) — recovering deliverable without "
+                    "re-payment",
+                    parent_order_id,
+                    existing.child_order_id,
+                    existing.child_tx_hash,
+                )
+                deliverable = await _recover_settled(existing, task_prompt, cap)
+                _mark_completed(parent_order_id, deliverable)
+                return deliverable
+
+            # No spend has occurred yet (new | claimed | failed): safe to run.
+            _claim_order(parent_order_id)
+            deliverable, spent = await _run_child_cycle(
                 parent_order_id=parent_order_id,
                 task_prompt=task_prompt,
                 params=params,
                 cap=cap,
                 settings=settings,
             )
+            if spent:
+                _mark_completed(parent_order_id, deliverable)
+            else:
+                _mark_failed(parent_order_id)
+            return deliverable
         finally:
             if owns_cap:
                 close = getattr(cap, "close", None)
@@ -133,8 +228,45 @@ async def execute_main_brokerage_order(
                             "brokerage: cap close failed", exc_info=True
                         )
 
-        _RESULTS[parent_order_id] = deliverable
-        return deliverable
+
+async def _recover_settled(
+    row: BrokerageOrder, task_prompt: str, cap: CapClient
+) -> str:
+    """Rebuild a deliverable for a child that was already paid (crash recovery).
+
+    We do NOT re-run discovery/scoring/payment — the spend already happened and
+    is proven by `row.child_tx_hash`. We simply re-fetch the child's delivery and
+    emit a truthful recovery deliverable anchored to the recorded settlement.
+    """
+    child_output = ""
+    if row.child_order_id:
+        try:
+            delivery = await cap.get_delivery(row.child_order_id)
+            child_output = delivery.output_text
+        except Exception:  # noqa: BLE001 - delivery may be unavailable post-crash
+            logger.debug(
+                "brokerage: could not re-fetch delivery for %s",
+                row.child_order_id,
+                exc_info=True,
+            )
+    output_hash = engine._sha256(child_output) if child_output else ""
+    return "\n".join(
+        [
+            "CROON RFQ — brokered fulfilment (recovered after interruption)",
+            f"Task: {task_prompt}",
+            "",
+            "This order's child agent was already hired and PAID before an "
+            "interruption; it was NOT paid again on recovery.",
+            "",
+            "On-chain settlement (child):",
+            f"  child order id: {row.child_order_id}",
+            f"  tx hash:        {row.child_tx_hash}",
+            f"  output sha256:  {output_hash or '(delivery unavailable)'}",
+            "",
+            "Delivered work product:",
+            child_output or "(delivery could not be re-fetched)",
+        ]
+    )
 
 
 async def _run_child_cycle(
@@ -144,7 +276,8 @@ async def _run_child_cycle(
     params: dict,
     cap: CapClient,
     settings: Settings,
-) -> str:
+) -> tuple[str, bool]:
+    """Return (deliverable, spent). `spent` is True iff a child was hired+paid."""
     category = params.get("category")
     max_agents = int(params.get("max_agents_to_query", 3) or 3)
     criteria = list(params.get("acceptance_criteria") or [])
@@ -179,14 +312,17 @@ async def _run_child_cycle(
 
     if len(quotes) < 1:
         if not capable_fallbacks:
-            return _no_provider_deliverable(
-                task_prompt=task_prompt,
-                category=category,
-                effective_budget=effective_budget,
-                reason=(
-                    "no live bids and no capability-appropriate fallback "
-                    f"provider for category '{category}' — no spend"
+            return (
+                _no_provider_deliverable(
+                    task_prompt=task_prompt,
+                    category=category,
+                    effective_budget=effective_budget,
+                    reason=(
+                        "no live bids and no capability-appropriate fallback "
+                        f"provider for category '{category}' — no spend"
+                    ),
                 ),
+                False,
             )
         emit("fallback_triggered", reason="no live bids")
         quotes = await engine._collect_quotes(
@@ -195,11 +331,14 @@ async def _run_child_cycle(
         )
         fallback_used = True
         if len(quotes) < 1:
-            return _no_provider_deliverable(
-                task_prompt=task_prompt,
-                category=category,
-                effective_budget=effective_budget,
-                reason="capability-matched fallback did not respond — no spend",
+            return (
+                _no_provider_deliverable(
+                    task_prompt=task_prompt,
+                    category=category,
+                    effective_budget=effective_budget,
+                    reason="capability-matched fallback did not respond — no spend",
+                ),
+                False,
             )
 
     # --- Score + select under the (capped) budget ----------------------------
@@ -215,14 +354,17 @@ async def _run_child_cycle(
         selection = score_quotes(fb_quotes, effective_budget)
 
     if selection.winner is None:
-        return _no_provider_deliverable(
-            task_prompt=task_prompt,
-            category=category,
-            effective_budget=effective_budget,
-            reason=(
-                "no eligible quote under the capped child budget "
-                f"({effective_budget} USDC) — no spend"
+        return (
+            _no_provider_deliverable(
+                task_prompt=task_prompt,
+                category=category,
+                effective_budget=effective_budget,
+                reason=(
+                    "no eligible quote under the capped child budget "
+                    f"({effective_budget} USDC) — no spend"
+                ),
             ),
+            False,
         )
 
     winner = selection.winner
@@ -230,6 +372,12 @@ async def _run_child_cycle(
     # --- Hire + PAY the winning child via CAP --------------------------------
     winner_info = engine._find_agent(candidates + fallback_roster, winner.agent_id)
     settlement = await cap.hire_and_pay(winner_info, task, winner.price_usdc)
+
+    # DURABILITY: record the spend IMMEDIATELY, before we do anything else. If we
+    # crash after this line, a replay recovers via the 'settled' path and never
+    # pays a second child.
+    _mark_settled(parent_order_id, settlement.order_id, settlement.tx_hash)
+
     delivery = await cap.get_delivery(settlement.order_id)
     output_hash = engine._sha256(delivery.output_text)
 
@@ -264,7 +412,7 @@ async def _run_child_cycle(
         receipt_hash=receipt_hash,
     )
 
-    return _render_deliverable(receipt, delivery.output_text)
+    return _render_deliverable(receipt, delivery.output_text), True
 
 
 def _render_deliverable(receipt: dict, child_output: str) -> str:
@@ -338,6 +486,11 @@ def _no_provider_deliverable(
 
 
 def _reset_idempotency_cache() -> None:
-    """Test hook: clear the parent-order idempotency cache."""
-    _RESULTS.clear()
+    """Test hook: clear the durable parent-order idempotency store + locks."""
     _LOCKS.clear()
+    with Session(_db_engine) as session:
+        for row in session.exec(
+            __import__("sqlmodel").select(BrokerageOrder)
+        ).all():
+            session.delete(row)
+        session.commit()

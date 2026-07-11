@@ -21,9 +21,14 @@ from decimal import Decimal
 
 import pytest
 
+from sqlmodel import Session
+
 from croon import brokerage
 from croon.cap_client import MockCapClient
 from croon.config import Settings
+from croon.db import engine as _db_engine
+from croon.models import BrokerageOrder
+
 
 
 def _settings(**overrides) -> Settings:
@@ -105,7 +110,66 @@ def test_replayed_parent_order_returns_cache_without_second_payment():
     assert cap.hire_calls == 1       # child paid exactly once across the replay
 
 
+# --- Durability: idempotency survives a process restart ---------------------
+
+
+def test_settled_state_recovers_across_restart_without_second_payment():
+    # Simulate a crash AFTER the child was hired+paid but BEFORE the deliverable
+    # was stored: the durable BrokerageOrder row is left in 'settled'. This is
+    # exactly the state an in-memory cache would LOSE on restart. A replay must
+    # recover from SQLite and NEVER pay a second child.
+    parent_id = "parent_restart"
+    child_order_id = "mock_order_preexisting"
+    child_tx = "0xdeadbeefrestart"
+    with Session(_db_engine) as session:
+        session.add(
+            BrokerageOrder(
+                parent_order_id=parent_id,
+                status="settled",
+                child_order_id=child_order_id,
+                child_tx_hash=child_tx,
+            )
+        )
+        session.commit()
+
+    # Fresh cap == fresh process: no in-memory knowledge of the prior payment.
+    cap = CountingCap(simulate_latency=False)
+    out = _run(
+        brokerage.execute_main_brokerage_order(
+            parent_order_id=parent_id,
+            task_prompt="risk brief",
+            params={"category": "risk"},
+            cap=cap,
+            settings=_settings(),
+        )
+    )
+    assert cap.hire_calls == 0                     # NO second child payment
+    assert "recovered after interruption" in out
+    assert child_tx in out                          # anchored to the real spend
+
+    # The row is advanced to 'completed' and the deliverable persisted.
+    with Session(_db_engine) as session:
+        row = session.get(BrokerageOrder, parent_id)
+        assert row is not None
+        assert row.status == "completed"
+        assert row.deliverable == out
+
+    # A further replay now returns the stored deliverable verbatim, still no pay.
+    again = _run(
+        brokerage.execute_main_brokerage_order(
+            parent_order_id=parent_id,
+            task_prompt="risk brief",
+            params={"category": "risk"},
+            cap=cap,
+            settings=_settings(),
+        )
+    )
+    assert again == out
+    assert cap.hire_calls == 0
+
+
 # --- Spend guard ------------------------------------------------------------
+
 
 
 def test_spend_guard_caps_child_budget_below_buyer_budget():

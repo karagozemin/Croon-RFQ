@@ -83,6 +83,47 @@ class Run(SQLModel, table=True):
     fallback_used: bool = False
 
 
+class BrokerageOrder(SQLModel, table=True):
+    """Durable idempotency record for a MAIN-service brokered order.
+
+    When a buyer hires the MAIN CROON RFQ service, CROON re-opens the market and
+    HIRES + PAYS a downstream (child) agent — real USDC on Base. The CAP
+    WebSocket can replay ``ORDER_PAID`` on reconnect AND across a provider
+    process RESTART, so an in-memory cache is NOT sufficient: a replay after a
+    restart would pay a second child and drain the wallet.
+
+    This table is the crash-safe idempotency key. ``parent_order_id`` is the
+    primary key and the row moves through a two-phase lifecycle:
+
+      claimed   -> a child cycle is starting for this parent (no spend yet)
+      settled   -> the child was HIRED + PAID; ``child_tx_hash`` is recorded
+                   BEFORE the deliverable is assembled, so a crash between
+                   payment and delivery still proves the spend happened and a
+                   replay rebuilds the deliverable WITHOUT paying again
+      completed -> the full proof-bundled ``deliverable`` is stored; a replay
+                   returns it verbatim
+      failed    -> the cycle ended with no spend (no eligible provider); a
+                   replay is free to retry
+
+    The narrow crash window (pay -> record settlement) is minimised by writing
+    the settled row immediately after ``hire_and_pay`` returns.
+    """
+
+    parent_order_id: str = Field(primary_key=True)
+
+    # claimed | settled | completed | failed
+    status: str = "claimed"
+
+    child_order_id: str | None = None
+    child_tx_hash: str | None = None
+
+    # Full buyer-facing deliverable text, stored once status == completed.
+    deliverable: str = ""
+
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class ProviderJob(SQLModel, table=True):
     """One incoming order served by OUR base agents as a CAP PROVIDER (§7/§10).
 
@@ -112,4 +153,3 @@ class ProviderJob(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
-
