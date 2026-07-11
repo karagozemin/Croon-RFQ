@@ -370,10 +370,20 @@ class ProviderWorker:
             return
         self._handled_orders.add(order_id)
 
-        from croo.types import (  # type: ignore
-            DeliverableType,
-            DeliverOrderRequest,
-        )
+        # The deliverable payload types come from the real SDK when it is
+        # installed (live mode). In mock/test mode the `croo` package is absent,
+        # so we fall back to a lightweight shim that mirrors the SDK shape
+        # (DeliverableType.TEXT + DeliverOrderRequest(deliverable_type=,
+        # deliverable_text=)). This keeps the whole paid-order fulfilment path
+        # exercisable offline without ever inventing a live SDK method.
+        try:
+            from croo.types import (  # type: ignore
+                DeliverableType,
+                DeliverOrderRequest,
+            )
+        except ModuleNotFoundError:
+            from croon._sdk_shim import DeliverableType, DeliverOrderRequest
+
 
         # Resolve the order record (authoritative service_id + negotiation link).
         try:
