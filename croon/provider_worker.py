@@ -406,15 +406,32 @@ class ProviderWorker:
                 )
 
         logger.info(
-            "provider: fulfilling paid order=%s service=%s (%s)",
-            order_id, spec.agent_id, spec.name,
+            "provider: fulfilling paid order=%s service=%s (%s) kind=%s",
+            order_id, spec.agent_id, spec.name, spec.kind,
         )
         try:
-            output = await spec.handler(prompt, {})
+            if spec.kind == "main":
+                # The MAIN CROON RFQ service does not return a static report: it
+                # RE-OPENS THE MARKET for this buyer and hires+pays a downstream
+                # child agent via CAP. That spends real USDC, so it must be keyed
+                # on the parent order id for idempotency (WS replay safe) and
+                # bounded by the off-chain spend guard — both handled inside the
+                # brokerage module. All CAP calls still go through CapClient.
+                from croon import brokerage
+
+                output = await brokerage.execute_main_brokerage_order(
+                    parent_order_id=order_id,
+                    task_prompt=prompt,
+                    params={},
+                    settings=self._settings,
+                )
+            else:
+                output = await spec.handler(prompt, {})
         except Exception:  # noqa: BLE001
             logger.exception("provider: handler failed order=%s", order_id)
             self._handled_orders.discard(order_id)  # not delivered; allow retry
             return
+
 
         try:
             result = await self._client.deliver_order(

@@ -6,9 +6,11 @@ All secrets and tunables live here. Nothing is hardcoded elsewhere.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic import AliasChoices, Field
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +41,15 @@ class Settings(BaseSettings):
 
     # Mini-RFQ engine
     rfq_timeout_seconds: int = 10
+
+    # Spend guard for the MAIN brokerage service (spec: CROON RFQ sold on the
+    # Store). When a buyer hires CROON RFQ itself, CROON re-opens the market and
+    # may HIRE+PAY a downstream (child) agent to fulfil the work. This caps the
+    # USDC CROON will spend on that one child settlement, so a single paid order
+    # can never drain the agent wallet regardless of the buyer-supplied budget.
+    # -> CROON_MAX_CHILD_SPEND_USDC
+    max_child_spend_usdc: Decimal = Decimal("0.50")
+
 
     # Scoring weights (documented in scoring.py)
     w_price: float = 0.4
