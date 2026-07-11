@@ -5,8 +5,11 @@ These exercise every network-free path:
   - status()/served_services introspection
   - start() safe no-op guards (disabled / mock mode / no key / empty map)
   - _field() id extraction from both the Event dataclass and its raw payload
-  - _on_negotiation_created -> accept_negotiation dispatch (+ ignore-foreign)
-  - _on_order_paid -> handler -> deliver_order dispatch (+ params via get_order)
+  - _on_negotiation_created -> get_negotiation -> accept_negotiation dispatch
+    (+ ignore-foreign, + fund-transfer refusal)
+  - _on_order_paid -> get_order -> get_negotiation(prompt) -> handler ->
+    deliver_order dispatch (+ service resolution + idempotency)
+  - _on_order_terminal idempotency-marker cleanup
 
 The real SDK is never imported here: start() bails out before importing `croo`
 whenever we don't force it live, and the event handlers are driven directly with
@@ -17,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+
 
 import pytest
 
@@ -32,6 +36,7 @@ from croon.provider_worker import ProviderWorker
 class FakeEvent:
     """Mimics the SDK Event dataclass: typed id fields + a raw payload dict."""
 
+    type: str = ""
     negotiation_id: str = ""
     order_id: str = ""
     service_id: str = ""
@@ -39,9 +44,16 @@ class FakeEvent:
 
 
 @dataclass
-class FakeOrder:
+class FakeNegotiation:
     service_id: str = ""
     requirements: str = ""
+    fund_amount: str = ""
+
+
+@dataclass
+class FakeOrder:
+    service_id: str = ""
+    negotiation_id: str = ""
 
 
 class FakeDeliverResult:
@@ -52,10 +64,22 @@ class FakeDeliverResult:
 class FakeClient:
     """Records the provider-side SDK calls the worker makes."""
 
-    def __init__(self, order: FakeOrder | None = None) -> None:
+    def __init__(
+        self,
+        order: FakeOrder | None = None,
+        negotiation: FakeNegotiation | None = None,
+    ) -> None:
         self._order = order or FakeOrder()
+        self._negotiation = negotiation or FakeNegotiation()
         self.accepted: list[str] = []
         self.delivered: list[tuple[str, str]] = []
+
+    async def get_negotiation(self, negotiation_id: str):
+        # Default the negotiation's service to the order's, so tests that only
+        # set the order still validate ownership cleanly.
+        if not self._negotiation.service_id and self._order.service_id:
+            self._negotiation.service_id = self._order.service_id
+        return self._negotiation
 
     async def accept_negotiation(self, negotiation_id: str):
         self.accepted.append(negotiation_id)
@@ -87,8 +111,6 @@ def _settings(**overrides) -> Settings:
     settings = Settings(**base)
     object.__setattr__(settings, "croo_sdk_key", sdk_key)
     return settings
-
-
 
 
 # --- Service resolution -----------------------------------------------------
@@ -189,7 +211,7 @@ def test_accept_negotiation_for_owned_service():
     w = ProviderWorker(
         _settings(provider_service_map_json=f'{{"{sid}": "base_gas_oracle"}}')
     )
-    client = FakeClient()
+    client = FakeClient(negotiation=FakeNegotiation(service_id=sid))
     w._client = client
     ev = FakeEvent(negotiation_id="neg_1", service_id=sid)
     asyncio.run(w._on_negotiation_created(ev))
@@ -207,6 +229,21 @@ def test_ignore_negotiation_for_foreign_service():
     assert client.accepted == []
 
 
+def test_refuse_negotiation_with_unexpected_fund_amount():
+    sid = "svc_a"
+    w = ProviderWorker(
+        _settings(provider_service_map_json=f'{{"{sid}": "base_gas_oracle"}}')
+    )
+    # Backend reports a fund transfer on a service we configured as non-fund.
+    client = FakeClient(
+        negotiation=FakeNegotiation(service_id=sid, fund_amount="5.00")
+    )
+    w._client = client
+    ev = FakeEvent(negotiation_id="neg_1", service_id=sid)
+    asyncio.run(w._on_negotiation_created(ev))
+    assert client.accepted == []  # refused rather than guessing the accept variant
+
+
 # --- Paid-order fulfilment --------------------------------------------------
 
 
@@ -215,7 +252,10 @@ def test_order_paid_runs_handler_and_delivers():
     w = ProviderWorker(
         _settings(provider_service_map_json=f'{{"{sid}": "base_gas_oracle"}}')
     )
-    client = FakeClient(order=FakeOrder(service_id=sid, requirements=""))
+    client = FakeClient(
+        order=FakeOrder(service_id=sid, negotiation_id="neg_9"),
+        negotiation=FakeNegotiation(service_id=sid, requirements=""),
+    )
     w._client = client
     ev = FakeEvent(order_id="ord_9", service_id=sid)
     asyncio.run(w._on_order_paid(ev))
@@ -231,7 +271,7 @@ def test_order_paid_resolves_spec_from_order_when_event_omits_service():
         _settings(provider_service_map_json=f'{{"{sid}": "base_gas_oracle"}}')
     )
     # Event carries no service_id; worker must fall back to get_order().service_id.
-    client = FakeClient(order=FakeOrder(service_id=sid))
+    client = FakeClient(order=FakeOrder(service_id=sid, negotiation_id="neg_10"))
     w._client = client
     ev = FakeEvent(order_id="ord_10", service_id="")
     asyncio.run(w._on_order_paid(ev))
@@ -258,6 +298,44 @@ def test_order_paid_missing_order_id_is_noop():
     ev = FakeEvent(order_id="", service_id="svc_gas")
     asyncio.run(w._on_order_paid(ev))
     assert client.delivered == []
+
+
+def test_order_paid_is_idempotent_on_replay():
+    sid = "svc_gas"
+    w = ProviderWorker(
+        _settings(provider_service_map_json=f'{{"{sid}": "base_gas_oracle"}}')
+    )
+    client = FakeClient(
+        order=FakeOrder(service_id=sid, negotiation_id="neg_12"),
+        negotiation=FakeNegotiation(service_id=sid),
+    )
+    w._client = client
+    ev = FakeEvent(order_id="ord_12", service_id=sid)
+    # Two ORDER_PAID for the same order (WS reconnect replay) -> deliver once.
+    asyncio.run(w._on_order_paid(ev))
+    asyncio.run(w._on_order_paid(ev))
+    assert len(client.delivered) == 1
+
+
+def test_order_terminal_clears_idempotency_marker():
+    w = ProviderWorker(
+        _settings(provider_service_map_json='{"svc_gas": "base_gas_oracle"}')
+    )
+    w._handled_orders.add("ord_13")
+    w._on_order_terminal(FakeEvent(type="order_expired", order_id="ord_13"))
+    assert "ord_13" not in w._handled_orders
+
+
+# --- Config-example CLI helper (no secrets) ---------------------------------
+
+
+def test_config_example_contains_real_spec_ids_and_no_real_key():
+    from croon.provider_worker import _config_example
+
+    text = _config_example()
+    for spec_id in BASE_AGENTS:
+        assert spec_id in text
+    assert "<YOUR_SECRET_SDK_KEY>" in text  # placeholder, never a real secret
 
 
 if __name__ == "__main__":  # allow `python tests/test_provider_worker.py`

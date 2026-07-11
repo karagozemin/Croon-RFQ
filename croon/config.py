@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     provider_enabled: bool = False                 # -> CROON_PROVIDER_ENABLED
     provider_service_map_json: str = "{}"          # -> CROON_PROVIDER_SERVICE_MAP_JSON
 
+    # First-connection diagnostics. When true the worker logs a redacted,
+    # non-secret summary of every inbound WS event (class name, type, present id
+    # fields). NEVER logs SDK keys, buyer payload secrets, or credentials.
+    provider_debug_events: bool = False            # -> CROON_PROVIDER_DEBUG_EVENTS
+
+
 
     @property
     def is_live(self) -> bool:
