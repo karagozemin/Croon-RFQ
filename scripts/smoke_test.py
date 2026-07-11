@@ -1,13 +1,18 @@
 """End-to-end smoke test for the mini-RFQ pipeline (mock mode, no network).
 
-Runs TWO scenarios and prints a compact report:
-  1. Normal run  -> a market agent wins, gets paid, delivers.
-  2. Fallback run -> all market agents time out (failure injection) -> one of
-     OUR base agents wins and delivers its REAL work product (§7/§10).
+Runs THREE scenarios and prints a compact report:
+  1. Normal run       -> a market agent wins, gets paid, delivers.
+  2. Fallback run     -> all market agents time out (failure injection) AND the
+     task category is one a base agent can actually do -> one of OUR base
+     agents wins and delivers its REAL work product (§7/§10).
+  3. No-provider run  -> all market agents time out AND no base agent is
+     capability-appropriate for the task category -> the run refuses and spends
+     ZERO budget (budget-protecting risk management, §7).
 
 Usage:  python -m scripts.smoke_test
 Exit code is non-zero if any invariant fails.
 """
+
 
 from __future__ import annotations
 
@@ -32,17 +37,18 @@ def _fresh_session() -> Session:
     return Session(engine)
 
 
-def _make_order(name: str) -> StandingOrder:
+def _make_order(name: str, category: str = "research") -> StandingOrder:
     return StandingOrder(
         name=name,
-        task_prompt="Produce a wallet risk brief for 0xabc...",
-        category="risk",
+        task_prompt=f"Produce a {category} deliverable for 0xabc...",
+        category=category,
         cadence_seconds=300,
         budget_per_run_usdc=Decimal("0.50"),
         max_total_budget_usdc=Decimal("5.00"),
         max_agents_to_query=3,
-        acceptance_criteria=["cite sources", "flag high-risk approvals"],
+        acceptance_criteria=["cite sources", "meet acceptance criteria"],
     )
+
 
 
 async def _scenario_normal() -> bool:
@@ -71,7 +77,9 @@ async def _scenario_normal() -> bool:
 
 async def _scenario_fallback() -> bool:
     session = _fresh_session()
-    order = _make_order("Wallet Risk Brief (fallback)")
+    # "research" IS a capability of the base_listing_copy agent, so a capable
+    # fallback exists and should win when the live market goes silent.
+    order = _make_order("Research Brief (fallback)", category="research")
     session.add(order)
     session.commit()
     session.refresh(order)
@@ -79,6 +87,7 @@ async def _scenario_fallback() -> bool:
     # Failure injection: every market agent stalls past the RFQ timeout.
     cap = MockCapClient(simulate_latency=False, fail_non_base_quotes=True)
     run = await execute_run(order, session, cap)
+
 
     is_base_winner = run.winner_agent_id in {"base_listing_copy", "base_gas_oracle"}
     # The delivered output must be a base agent's REAL work product, not a stub.
@@ -99,12 +108,40 @@ async def _scenario_fallback() -> bool:
     return bool(ok)
 
 
+async def _scenario_no_provider() -> bool:
+    session = _fresh_session()
+    # "risk" is NOT a capability of any base agent. When the live market goes
+    # silent, there is no capability-appropriate fallback -> the run must refuse
+    # and spend ZERO budget rather than misroute to a wrong-capability agent.
+    order = _make_order("Wallet Risk Brief (no provider)", category="risk")
+    session.add(order)
+    session.commit()
+    session.refresh(order)
+
+    cap = MockCapClient(simulate_latency=False, fail_non_base_quotes=True)
+    run = await execute_run(order, session, cap)
+
+    ok = (
+        run.status == "no_provider_available"
+        and run.winner_agent_id is None
+        and run.amount_paid_usdc == Decimal("0")
+        and order.total_spent_usdc == Decimal("0")
+        and order.status != "budget_exhausted"
+    )
+    print(f"[no-provider] status={run.status} winner={run.winner_agent_id} "
+          f"paid={run.amount_paid_usdc} total_spent={order.total_spent_usdc}")
+    print(f"              reason: {run.selection_reason}")
+    return bool(ok)
+
+
 async def main() -> int:
     print("=== CROON RFQ pipeline smoke test (mock mode) ===")
     results = {
         "normal": await _scenario_normal(),
         "fallback": await _scenario_fallback(),
+        "no_provider": await _scenario_no_provider(),
     }
+
     print("---")
     for name, passed in results.items():
         print(f"{'PASS' if passed else 'FAIL'}  {name}")

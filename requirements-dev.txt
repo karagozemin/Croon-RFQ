@@ -1,0 +1,8 @@
+# Development / test dependencies for CROON RFQ.
+# Install alongside the runtime deps:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# Run the test suite (fully offline — the real `croo` SDK is never imported):
+#   pytest -q
+
+pytest>=8.0

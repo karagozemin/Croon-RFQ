@@ -66,7 +66,43 @@ _MOCK_FALLBACK_AGENTS = [
 ]
 
 
+# Which task categories each base fallback agent can ACTUALLY fulfill.
+# A fallback provider must be capability-appropriate: routing a "risk brief" to
+# a gas oracle is wrong-capability routing and would (rightly) lose execution
+# points. If nothing here matches the task category we refuse and spend nothing.
+_FALLBACK_CAPABILITIES: dict[str, set[str]] = {
+    "base_listing_copy": {
+        "research", "listing", "content", "copywriting", "marketing",
+    },
+    "base_gas_oracle": {"infra", "gas", "cost", "oracle"},
+}
+
+
+def _capable_fallbacks(
+    roster: list[AgentInfo], category: str | None
+) -> list[AgentInfo]:
+    """Filter the fallback roster to providers that can DO this task.
+
+    Matching is by task category against each provider's declared capabilities
+    (or its own category as a fallback). If `category` is None we cannot verify
+    capability, so we refuse to guess (returns []). The caller then marks the
+    run `no_provider_available` and spends no budget (§7 risk management).
+    """
+    if not category:
+        return []
+    cat = category.strip().lower()
+    capable: list[AgentInfo] = []
+    for a in roster:
+        caps = _FALLBACK_CAPABILITIES.get(a.agent_id)
+        if caps and cat in caps:
+            capable.append(a)
+        elif a.category and a.category.strip().lower() == cat:
+            capable.append(a)
+    return capable
+
+
 def _fallback_agents(settings) -> list[AgentInfo]:
+
     """Resolve the fallback provider roster (§7) for the active CAP mode.
 
     - mock : the built-in base agents modeled in MockCapClient.
@@ -139,6 +175,23 @@ async def execute_run(
     )
 
     fallback_roster = _fallback_agents(settings)
+    # Only fallbacks that can actually DO this task category are eligible.
+    capable_fallbacks = _capable_fallbacks(fallback_roster, order.category)
+
+    def _no_provider(reason: str) -> Run:
+        """Mark the run as no_provider_available and spend NO budget (§7)."""
+        run.status = "no_provider_available"
+        run.selection_reason = reason
+        run.amount_paid_usdc = Decimal("0")
+        run.fallback_used = True
+        run.finished_at = _now()
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        emit("no_provider_available", reason=reason)
+        emit("run_completed", status=run.status)
+        return run
+
 
     try:
 
@@ -160,21 +213,32 @@ async def execute_run(
 
         # --- Fallback (§7): fewer than 1 valid quote -> base agent --------
         if len(quotes) < 1:
+            # A fallback must be CAPABILITY-appropriate. If no base agent can do
+            # this task category, we refuse and spend NOTHING (risk management).
+            if not capable_fallbacks:
+                return _no_provider(
+                    "no live bids and no capability-appropriate fallback "
+                    f"provider for category '{order.category}' — budget "
+                    "protected, no spend"
+                )
             emit(
                 "fallback_triggered",
                 message=(
                     "No live bids received — budget protection active — "
-                    "routing to fallback provider."
+                    "routing to capability-matched fallback provider."
                 ),
             )
             quotes = await _collect_quotes(
-                cap, fallback_roster, task, settings.rfq_timeout_seconds, emit,
+                cap, capable_fallbacks, task, settings.rfq_timeout_seconds, emit,
                 is_fallback=True,
             )
             fallback_used = True
             if len(quotes) < 1:
+                return _no_provider(
+                    "capability-matched fallback provider did not respond — "
+                    "budget protected, no spend"
+                )
 
-                raise RunError("no quotes even from fallback providers")
 
         # --- Layer C: score + select --------------------------------------
         selection = score_quotes(quotes, order.budget_per_run_usdc)
@@ -184,17 +248,17 @@ async def execute_run(
         )
 
         if selection.winner is None:
-            # All quotes over budget. Try fallback once if we haven't already.
-            if not fallback_used:
+            # All quotes over budget. Try a capability-matched fallback once.
+            if not fallback_used and capable_fallbacks:
                 emit(
                     "fallback_triggered",
                     message=(
                         "All quotes exceeded per-run budget — routing to "
-                        "fallback provider."
+                        "capability-matched fallback provider."
                     ),
                 )
                 fb_quotes = await _collect_quotes(
-                    cap, fallback_roster, task,
+                    cap, capable_fallbacks, task,
                     settings.rfq_timeout_seconds, emit, is_fallback=True,
                 )
 
@@ -205,7 +269,12 @@ async def execute_run(
                     quotes=[_qr_json(r) for r in selection.scored_quotes],
                 )
             if selection.winner is None:
-                raise RunError("no eligible quote under budget (post-fallback)")
+                # Nothing eligible and no capable fallback under budget.
+                return _no_provider(
+                    "no eligible quote under budget and no capability-matched "
+                    "fallback under budget — budget protected, no spend"
+                )
+
 
         winner = selection.winner
         emit(

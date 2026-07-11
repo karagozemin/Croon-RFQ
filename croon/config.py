@@ -8,7 +8,9 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 
 
@@ -45,10 +47,33 @@ class Settings(BaseSettings):
 
     # --- LIVE mode only (CROO CAP SDK — confirmed against Python SDK Reference) ---
     # Auth: AgentClient(config, sdk_key). Key format `croo_sk_...`, from Dashboard.
-    croo_sdk_key: str | None = None            # -> CROON_CROO_SDK_KEY
-    croo_api_url: str = "https://api.croo.network"
-    croo_ws_url: str = "wss://api.croo.network/ws"
-    base_rpc_url: str = "https://mainnet.base.org"
+    # Each field accepts BOTH our prefixed name (CROON_*) AND the SDK's own
+    # native env name (e.g. CROO_SDK_KEY, BASE_RPC_URL) so a wallet/SDK already
+    # configured for CROO works without duplicating vars.
+    croo_sdk_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CROON_CROO_SDK_KEY", "CROO_SDK_KEY"),
+    )
+    # Our OWN requester agent id, stamped onto negotiations (optional per SDK).
+    croo_requester_agent_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CROON_CROO_REQUESTER_AGENT_ID", "CROO_REQUESTER_AGENT_ID"
+        ),
+    )
+    croo_api_url: str = Field(
+        default="https://api.croo.network",
+        validation_alias=AliasChoices("CROON_CROO_API_URL", "CROO_API_URL"),
+    )
+    croo_ws_url: str = Field(
+        default="wss://api.croo.network/ws",
+        validation_alias=AliasChoices("CROON_CROO_WS_URL", "CROO_WS_URL"),
+    )
+    base_rpc_url: str = Field(
+        default="https://mainnet.base.org",
+        validation_alias=AliasChoices("CROON_BASE_RPC_URL", "BASE_RPC_URL"),
+    )
+
 
     # Canonical native USDC on Base (NOT bridged USDbC). Confirmed via Coinbase
     # CDP docs. TODO(verify): confirm CAP settles in THIS USDC, not USDbC
@@ -67,6 +92,19 @@ class Settings(BaseSettings):
     fallback_agent_id: str | None = None
     fallback_agent_name: str = "CROON Fallback Provider"
 
+    # --- Base-agent PROVIDER worker (spec §10; supply side) ------------------
+    # When enabled (and in live mode with a valid SDK key), CROON runs the two
+    # base agents as CAP providers: it opens the SDK WebSocket, accepts
+    # negotiations for its owned services, and delivers on ORDER_PAID.
+    #
+    # Services are created on the Store/dashboard (the SDK has NO register
+    # primitive), so the worker only needs a map from each owned Store
+    # service_id -> which local AgentSpec runs it. JSON object:
+    #   {"<service_id>": "base_listing_copy", "<service_id>": "base_gas_oracle"}
+    provider_enabled: bool = False                 # -> CROON_PROVIDER_ENABLED
+    provider_service_map_json: str = "{}"          # -> CROON_PROVIDER_SERVICE_MAP_JSON
+
+
     @property
     def is_live(self) -> bool:
         return self.cap_mode.strip().lower() == "live"
@@ -79,6 +117,16 @@ class Settings(BaseSettings):
             return data if isinstance(data, list) else []
         except json.JSONDecodeError:
             return []
+
+    @property
+    def provider_service_map(self) -> dict[str, str]:
+        """Parsed {service_id: agent_spec_id} map (see provider_service_map_json)."""
+        try:
+            data = json.loads(self.provider_service_map_json or "{}")
+            return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
 
 
 

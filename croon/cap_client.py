@@ -21,6 +21,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import hashlib
+import json
 from datetime import datetime, timezone
 
 from decimal import Decimal
@@ -316,6 +317,10 @@ class LiveCapClient(CapClient):
             rpc_url=settings.base_rpc_url,
         )
         self._client = AgentClient(self._config, settings.croo_sdk_key)
+        # Our own requester agent id, stamped onto negotiations so the provider
+        # (and our run history) can attribute the request. Optional per SDK.
+        self._requester_agent_id = settings.croo_requester_agent_id or ""
+
 
     async def discover_agents(
         self, category: str | None, limit: int
@@ -367,32 +372,46 @@ class LiveCapClient(CapClient):
                 "negotiate. Add it to CROON_LIVE_CANDIDATES_JSON."
             )
 
-        # 1) Requester initiates the negotiation for the winning service.
-        # TODO(verify): confirm the exact request dataclass/fields for
-        # negotiate_order in the installed croo-sdk build (see provider.py /
-        # requester.py examples). We pass a dict; the SDK accepts a request
-        # object — adjust field names here if the SDK errors on unknown keys.
-        neg = await self._client.negotiate_order(
-            {
-                "service_id": agent.service_id,
-                "agent_id": agent.agent_id,
-                "price": str(agreed_price_usdc),
-                "requirement": task.task_prompt,
-                "acceptance_criteria": task.acceptance_criteria,
-            }
+        # Verified against croo-sdk: negotiate_order takes a typed
+        # NegotiateOrderRequest (NOT a dict). Fields confirmed by introspection:
+        #   service_id, requirements, metadata, requester_agent_id,
+        #   fund_amount, fund_token.  There is NO `price` field — the price comes
+        #   from the provider's listed service; `agreed_price_usdc` is enforced
+        #   OFF-CHAIN by our budget rule (we only negotiate the winner, whose
+        #   listed price already passed the budget gate in scoring).
+        from croo import NegotiateOrderRequest  # type: ignore
+
+        req = NegotiateOrderRequest(
+            service_id=agent.service_id,
+            requirements=task.task_prompt,
+            # Acceptance criteria carried as metadata (SDK metadata is a string).
+            metadata=json.dumps(
+                {"acceptance_criteria": task.acceptance_criteria}
+            ),
+            requester_agent_id=self._requester_agent_id,
         )
+
+        # 1) Requester initiates the negotiation for the winning service.
+        neg = await self._client.negotiate_order(req)
         negotiation_id = _attr(neg, "negotiation_id", "id")
 
         # 2) Wait for the provider to accept -> on-chain Order is created.
-        order_id = await self._await_order_created(negotiation_id)
+        #    Negotiation has NO order_id field; we resolve the Order by matching
+        #    negotiation_id via list_orders (see _await_order_created).
+        order_id = await self._await_order_created(str(negotiation_id))
 
         # 3) Pay the order in USDC on Base (SDK auto-handles ERC20 approve).
         # TODO(verify): confirm the SDK settles in the NATIVE USDC configured at
         # settings.usdc_contract_address (0x8335...2913), NOT bridged USDbC,
-        # before the first real payment. pay_order takes no token arg today; if a
-        # future SDK build exposes one, pass settings.usdc_contract_address here.
+        # before the first real payment. pay_order(order_id) takes no token arg.
         pay = await self._client.pay_order(order_id)
-        tx_hash = _attr(pay, "tx_hash", "transaction_hash", "hash", default=None)
+        # PayOrderResult exposes `tx_hash` and the updated `order`; prefer the
+        # top-level tx_hash, fall back to the order's pay_tx_hash.
+        tx_hash = _attr(pay, "tx_hash", default=None)
+        if not tx_hash:
+            order_obj = _attr(pay, "order", default=None)
+            if order_obj is not None:
+                tx_hash = _attr(order_obj, "pay_tx_hash", default=None)
 
         return Settlement(
             order_id=str(order_id),
@@ -423,19 +442,31 @@ class LiveCapClient(CapClient):
     # --- helpers -----------------------------------------------------------
 
     async def _await_order_created(self, negotiation_id: str) -> str:
-        """Poll the negotiation until the provider accepts and an Order exists.
+        """Poll until the provider accepts the negotiation and an Order exists.
 
+        Verified against croo-sdk: `Negotiation` has NO `order_id` field, so we
+        cannot read the order off the negotiation. Instead we:
+          1) poll get_negotiation() to observe ACCEPTED / REJECTED / EXPIRED, and
+          2) once ACCEPTED, resolve the created Order via list_orders() by
+             matching its negotiation_id.
         We poll rather than rely on the WS callback to keep hire_and_pay a
         simple awaitable. Times out -> caller routes to fallback (§7).
         """
+        from croo import ListOptions  # type: ignore
+
         deadline = asyncio.get_event_loop().time() + self._ACCEPT_TIMEOUT_S
         while asyncio.get_event_loop().time() < deadline:
             neg = await self._client.get_negotiation(negotiation_id)
-            order_id = _attr(neg, "order_id", default=None)
-            status = str(_attr(neg, "status", default="") or "").lower()
-            if order_id:
-                return str(order_id)
-            if status in {"rejected", "expired"}:
+            status = str(_attr(neg, "status", default="") or "").upper()
+
+            if status == "ACCEPTED":
+                order_id = await self._find_order_for_negotiation(
+                    negotiation_id, ListOptions
+                )
+                if order_id:
+                    return order_id
+                # Accepted but Order not indexed yet — keep polling briefly.
+            elif status in {"REJECTED", "EXPIRED"}:
                 raise RuntimeError(
                     f"Negotiation {negotiation_id} {status} by provider."
                 )
@@ -444,6 +475,29 @@ class LiveCapClient(CapClient):
             f"Provider did not accept negotiation {negotiation_id} in "
             f"{self._ACCEPT_TIMEOUT_S}s."
         )
+
+    async def _find_order_for_negotiation(
+        self, negotiation_id: str, list_options_cls: type
+    ) -> str | None:
+        """Match the on-chain Order back to its negotiation via list_orders.
+
+        We scan our REQUESTER-role orders (most recent first) and match on the
+        order's negotiation_id. Only a handful of orders exist per demo, so a
+        small page is plenty.
+        """
+        opts = list_options_cls(
+            role="requester",
+            agent_id=self._requester_agent_id or None,
+            page=1,
+            page_size=50,
+        )
+        orders = await self._client.list_orders(opts)
+        for order in orders or []:
+            if str(_attr(order, "negotiation_id", default="")) == str(
+                negotiation_id
+            ):
+                return str(_attr(order, "order_id", "id"))
+        return None
 
 
 def _attr(obj: object, *names: str, default: object = "__RAISE__") -> object:

@@ -81,3 +81,35 @@ class Run(SQLModel, table=True):
     receipt_hash: str = ""  # sha256 of the full receipt bundle
 
     fallback_used: bool = False
+
+
+class ProviderJob(SQLModel, table=True):
+    """One incoming order served by OUR base agents as a CAP PROVIDER (§7/§10).
+
+    This is the SUPPLY-side ledger, distinct from Run (the demand side). Its
+    real job is IDEMPOTENCY: the CAP WebSocket may replay `order_negotiation_
+    created` on reconnect, and a provider must never accept/deliver the same
+    negotiation twice (double on-chain state, double work). `negotiation_id` is
+    UNIQUE, so a duplicate insert fails fast and we skip.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+
+    # Idempotency key — the CAP negotiation this job is fulfilling.
+    negotiation_id: str = Field(unique=True, index=True)
+    service_id: str = Field(index=True)
+    agent_id: str = ""  # OUR base-agent id handling it (e.g. base_gas_oracle)
+    order_id: str | None = None  # on-chain order, set once accepted
+
+    # received -> accepted -> delivered  (or rejected | failed)
+    status: str = "received"
+
+    requirements: str = ""       # the requester's task prompt
+    output_hash: str = ""        # sha256 of the deliverable we produced
+    accept_tx_hash: str | None = None
+    deliver_tx_hash: str | None = None
+    error: str = ""
+
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+

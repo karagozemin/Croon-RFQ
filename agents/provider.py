@@ -1,16 +1,19 @@
 """CAP provider runner for the two base agents (spec §10).
 
-This is the SUPPLY side of CAP: it registers a service on the Agent Store,
-listens for incoming orders/negotiations, runs the pure-logic core, and delivers
-the result on-chain. ALL SDK uncertainty is confined HERE (mirrors CapClient).
+This is the SUPPLY side of CAP: the service is created on the Agent Store, and
+this runner listens for incoming negotiations/orders, runs the pure-logic core,
+and delivers the result on-chain. ALL SDK uncertainty is confined to
+croon.provider_worker.ProviderWorker (mirrors CapClient on the buyer side).
+
 
 Design:
   - `AgentSpec` describes one hireable service (id, price, category, handler).
-  - `run_provider(spec)` is the live loop against the real CROO SDK (provider
-    role). STUBBED with TODO(verify) markers until confirmed against the SDK's
-    provider examples in build step 6-live.
+  - `run_provider(spec)` drives croon.provider_worker.ProviderWorker, the live
+    loop against the real CROO SDK (accept negotiation -> deliver on ORDER_PAID).
+    All SDK calls it makes are confirmed against the installed `croo` package.
   - The handler is `async (task_prompt, params) -> str` and returns the
     deliverable text. It reuses the deterministic cores, so a provider NEVER
+
     fails to deliver (critical for a fallback provider).
 
 Run standalone (no network) to smoke-test a core:
@@ -101,21 +104,29 @@ BASE_AGENTS: dict[str, AgentSpec] = {
 }
 
 
-# --- Live provider loop (STUBBED until confirmed vs SDK provider examples) --
+# --- Live provider loop -----------------------------------------------------
+#
+# The real WebSocket serving logic (accept negotiation -> deliver on ORDER_PAID)
+# lives in croon.provider_worker.ProviderWorker, which is wired ONLY to
+# SDK methods confirmed against the installed `croo` package (see that module's
+# docstring). This CLI entrypoint drives that worker for a single agent so a
+# provider can be run standalone. Services are created on the Store/dashboard
+# (the SDK has no register primitive), so we serve by service_id.
 
 
-async def run_provider(spec: AgentSpec) -> None:  # pragma: no cover - live only
-    """Register `spec` as a CAP service and serve orders until interrupted.
+async def run_provider(
+    spec: AgentSpec, service_id: str | None = None
+) -> None:  # pragma: no cover - live only
+    """Serve `spec` as a live CAP provider until interrupted.
 
-    TODO(verify, build step 6-live): confirm against the CROO SDK provider
-    examples (provider.py) the exact calls for:
-      - creating/registering a service (name, price, category, description)
-      - subscribing to incoming negotiations/orders (WS callback or async iter)
-      - accepting a negotiation -> triggers on-chain ORDER_CREATED
-      - submitting the deliverable (submit_delivery(order_id, text))
-    Do NOT invent method names; wire them once verified.
+    `service_id` is the Store service id that maps to this local core. If not
+    given, it is read from CROON_PROVIDER_SERVICE_MAP_JSON (the first entry that
+    points at this spec's agent_id).
     """
+    import asyncio
+
     from croon.config import get_settings
+    from croon.provider_worker import ProviderWorker
 
     settings = get_settings()
     if not settings.croo_sdk_key:
@@ -124,45 +135,41 @@ async def run_provider(spec: AgentSpec) -> None:  # pragma: no cover - live only
             "Use the CLI in offline mode to test the core logic instead."
         )
 
-    from croo import AgentClient, Config  # type: ignore
-
-    config = Config(
-        base_url=settings.croo_api_url,
-        ws_url=settings.croo_ws_url,
-        rpc_url=settings.base_rpc_url,
-    )
-    client = AgentClient(config, settings.croo_sdk_key)
-
-    # TODO(verify): register_service signature.
-    service = await client.register_service(
-        {
-            "name": spec.name,
-            "category": spec.category,
-            "price": str(spec.price_usdc),
-            "description": spec.description,
-            "tags": spec.tags,
-        }
-    )
-    service_id = getattr(service, "service_id", None) or getattr(service, "id", None)
-    print(f"[provider] '{spec.name}' registered as service_id={service_id}")
-
-    # TODO(verify): the negotiation/order subscription primitive. This assumes
-    # an async-iterator of incoming negotiations; adjust to the SDK's callback
-    # model if that's what the provider examples use.
-    async for negotiation in client.incoming_negotiations():  # type: ignore
-        neg_id = getattr(negotiation, "negotiation_id", None) or getattr(
-            negotiation, "id", None
+    # Resolve the service_id for this spec if not supplied explicitly.
+    if service_id is None:
+        for sid, spec_id in settings.provider_service_map.items():
+            if spec_id == spec.agent_id:
+                service_id = sid
+                break
+    if service_id is None:
+        raise RuntimeError(
+            f"No Store service_id mapped to agent '{spec.agent_id}'. Create the "
+            "service on the Store, then set CROON_PROVIDER_SERVICE_MAP_JSON="
+            f'{{"<service_id>": "{spec.agent_id}"}} (or pass it on the CLI).'
         )
-        params = getattr(negotiation, "params", {}) or {}
-        prompt = getattr(negotiation, "requirement", "") or ""
-        try:
-            order = await client.accept_negotiation(neg_id)  # -> ORDER_CREATED
-            order_id = getattr(order, "order_id", None) or getattr(order, "id", None)
-            output = await spec.handler(prompt, params)
-            await client.submit_delivery(order_id, output)
-            print(f"[provider] delivered order={order_id} ({len(output)} chars)")
-        except Exception as exc:  # noqa: BLE001 — keep serving other orders
-            print(f"[provider] order {neg_id} failed: {exc}")
+
+    # Build a worker scoped to just this one service, forcing it enabled/live.
+    worker = ProviderWorker(settings)
+    worker._service_specs = {service_id: spec}  # single-service CLI scope
+    worker._settings.provider_enabled = True
+
+    print(f"[provider] serving '{spec.name}' as service_id={service_id}")
+    await worker.start()
+    if not worker.ready:
+        raise RuntimeError(
+            "provider worker failed to start (check CROON_CAP_MODE=live, SDK key, "
+            "and WebSocket URL)"
+        )
+    try:
+        # Keep the process alive; the EventStream runs its own read loop.
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        await worker.stop()
+        print("[provider] stopped")
+
 
 
 # --- Standalone CLI (offline core smoke test) -------------------------------
@@ -184,6 +191,13 @@ async def _cli(argv: list[str]) -> int:
 
     p_srv = sub.add_parser("serve", help="run a live CAP provider (needs SDK)")
     p_srv.add_argument("agent_id", choices=list(BASE_AGENTS))
+    p_srv.add_argument(
+        "--service-id",
+        default=None,
+        help="Store service id for this agent (else read from "
+        "CROON_PROVIDER_SERVICE_MAP_JSON)",
+    )
+
 
     p_json = sub.add_parser("manifest", help="print the base-agent manifest JSON")
 
@@ -225,7 +239,8 @@ async def _cli(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "serve":
-        await run_provider(BASE_AGENTS[args.agent_id])
+        await run_provider(BASE_AGENTS[args.agent_id], service_id=args.service_id)
         return 0
+
 
     return 1

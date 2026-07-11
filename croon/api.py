@@ -26,8 +26,10 @@ from croon.config import get_settings
 from croon.db import engine, get_session, init_db
 from croon.events import EVENT_BUS
 from croon.models import Run, StandingOrder
+from croon.provider_worker import ProviderWorker
 from croon.scheduler import Scheduler
 from croon.schemas import StandingOrderCreate
+
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -38,12 +40,20 @@ async def lifespan(app: FastAPI):
     cap = build_cap_client()
     scheduler = Scheduler(cap)
     scheduler.start()
+    # Supply side (spec §10): serve our base agents as live CAP providers so
+    # they can be hired (incl. as CROON's own fallback). Safe no-op in mock mode
+    # or when disabled/unconfigured — see ProviderWorker.start().
+    provider = ProviderWorker()
+    await provider.start()
     app.state.cap = cap
     app.state.scheduler = scheduler
+    app.state.provider = provider
     try:
         yield
     finally:
         await scheduler.stop()
+        await provider.stop()
+
 
 
 app = FastAPI(title="CROON RFQ", version="0.1.0", lifespan=lifespan)
@@ -210,7 +220,13 @@ def get_run(run_id: str, session: Session = Depends(get_session)) -> dict:
 @app.get("/health")
 def health() -> dict:
     s = get_settings()
-    return {"status": "ok", "cap_mode": s.cap_mode}
+    provider = getattr(app.state, "provider", None)
+    return {
+        "status": "ok",
+        "cap_mode": s.cap_mode,
+        "provider": provider.status() if provider is not None else {"enabled": False},
+    }
+
 
 
 @app.get("/")
