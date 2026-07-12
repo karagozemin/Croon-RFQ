@@ -22,12 +22,23 @@ import abc
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 
 from decimal import Decimal
 
 from croon.config import Settings, get_settings
 from croon.schemas import AgentInfo, Delivery, Quote, Settlement, TaskSpec
+
+_log = logging.getLogger("croon.cap_client")
+
+# CAP delivery is async (provider fulfils AFTER on-chain payment). How long a
+# live get_delivery() polls for the deliverable before returning a pending
+# (empty) Delivery. A run whose payment already settled must NEVER fail just
+# because the provider hasn't produced output yet.
+DELIVERY_POLL_TIMEOUT_S = 15.0
+DELIVERY_POLL_INTERVAL_S = 2.0
+
 
 
 class CapClient(abc.ABC):
@@ -427,13 +438,51 @@ class LiveCapClient(CapClient):
         )
 
     async def get_delivery(self, order_id: str) -> Delivery:
-        delivery = await self._client.get_delivery(order_id)
-        text = _attr(
-            delivery, "deliverable_text", "output_text", "text", default=""
+        """Fetch the delivered output for a paid order.
+
+        CAP delivery is ASYNCHRONOUS: pay_order() settles USDC on Base
+        immediately, but the provider produces its deliverable afterwards. So a
+        get_delivery() call right after payment routinely 404s
+        (DELIVERY_NOT_FOUND) until the provider fulfils. We poll briefly, then
+        degrade GRACEFULLY: a not-yet-ready delivery must NOT crash a run whose
+        payment already succeeded on-chain. The run is still valid — the tx hash
+        is the proof of spend — and the buyer can re-fetch the delivery later.
+        """
+        deadline = asyncio.get_event_loop().time() + DELIVERY_POLL_TIMEOUT_S
+        last_exc: Exception | None = None
+        while True:
+            try:
+                delivery = await self._client.get_delivery(order_id)
+                text = _attr(
+                    delivery, "deliverable_text", "output_text", "text",
+                    default="",
+                )
+                if text:
+                    return Delivery(
+                        order_id=str(order_id),
+                        output_text=str(text),
+                        delivered_at=datetime.now(timezone.utc),
+                    )
+                # Delivery row exists but is empty/pending — keep polling.
+            except Exception as exc:  # noqa: BLE001 - 404 while provider works
+                last_exc = exc
+            if asyncio.get_event_loop().time() >= deadline:
+                break
+            await asyncio.sleep(DELIVERY_POLL_INTERVAL_S)
+
+        # Payment already settled on-chain; deliverable simply isn't ready yet.
+        # Return an empty-but-valid Delivery so the receipt still anchors the
+        # tx hash. Caller records output_ref="" / a pending marker.
+        _log.warning(
+            "delivery not ready for order_id=%s within %ss (payment already "
+            "settled; returning pending delivery). last_error=%s",
+            order_id,
+            DELIVERY_POLL_TIMEOUT_S,
+            last_exc,
         )
         return Delivery(
             order_id=str(order_id),
-            output_text=str(text or ""),
+            output_text="",
             delivered_at=datetime.now(timezone.utc),
         )
 
@@ -471,65 +520,71 @@ class LiveCapClient(CapClient):
         if isinstance(template, str):
             return template
         if isinstance(template, dict):
-            merged = {
-                **template,
-                "task_prompt": task.task_prompt,
-                "acceptance_criteria": task.acceptance_criteria,
-            }
-            return json.dumps(merged)
-        # Schema-agnostic default: bare JSON string, no rejectable object fields.
+            # Verbatim: providers reject ANY unrecognised field (proven by
+            # scripts/probe_requirements_shape.py), including our own
+            # task_prompt/acceptance_criteria. Operator supplies EXACTLY the
+            # object the service accepts, e.g. {"wallet_address": "0x..."} or {}
+            # for a parameterless service. Never inject extra fields.
+            return json.dumps(template)
+        # Schema-agnostic default: bare JSON string. NOTE most third-party
+        # providers require a JSON OBJECT and reject a bare string; give those
+        # an explicit requirements_template. Our own providers accept this.
         return json.dumps(task.task_prompt)
 
     async def _await_order_created(self, negotiation_id: str) -> str:
+        """Poll until the provider accepts AND the order is payable ('created').
 
-        """Poll until the provider accepts the negotiation and an Order exists.
+        Order lifecycle (CONFIRMED live): an accepted negotiation spawns an
+        on-chain order in status "creating" while its create_tx confirms on
+        Base, THEN flips to "created" (payable). pay_order() 400s with
+        INVALID_STATUS ("order can only be paid when status is created") if
+        called during "creating", so we MUST poll past it.
 
-        Verified against croo-sdk: `Negotiation` has NO `order_id` field, so we
-        cannot read the order off the negotiation. Instead we:
-          1) poll get_negotiation() to observe ACCEPTED / REJECTED / EXPIRED, and
-          2) once ACCEPTED, resolve the created Order via list_orders() by
-             matching its negotiation_id.
-        We poll rather than rely on the WS callback to keep hire_and_pay a
-        simple awaitable. Times out -> caller routes to fallback (§7).
+        `Negotiation` has NO order_id field, so we resolve the Order via
+        list_orders() by matching negotiation_id. Times out -> fallback (§7).
         """
         from croo import ListOptions  # type: ignore
 
         deadline = asyncio.get_event_loop().time() + self._ACCEPT_TIMEOUT_S
+        accepted = False
         while asyncio.get_event_loop().time() < deadline:
-            neg = await self._client.get_negotiation(negotiation_id)
-            status = str(_attr(neg, "status", default="") or "").upper()
+            if not accepted:
+                neg = await self._client.get_negotiation(negotiation_id)
+                status = str(_attr(neg, "status", default="") or "").upper()
+                if status == "ACCEPTED":
+                    accepted = True
+                elif status in {"REJECTED", "EXPIRED", "CANCELLED"}:
+                    raise RuntimeError(
+                        f"Negotiation {negotiation_id} {status} by provider."
+                    )
 
-            if status == "ACCEPTED":
-                order_id = await self._find_order_for_negotiation(
+            if accepted:
+                order_id, ostatus = await self._find_order_for_negotiation(
                     negotiation_id, ListOptions
                 )
-                if order_id:
+                if order_id and ostatus == "created":
                     return order_id
-                # Accepted but Order not indexed yet — keep polling briefly.
-            elif status in {"REJECTED", "EXPIRED"}:
-                raise RuntimeError(
-                    f"Negotiation {negotiation_id} {status} by provider."
-                )
+                if ostatus in {"rejected", "expired", "cancelled"}:
+                    raise RuntimeError(
+                        f"Order for negotiation {negotiation_id} is "
+                        f"'{ostatus}', not payable."
+                    )
+                # Order missing or still 'creating' -> keep polling.
             await asyncio.sleep(self._POLL_INTERVAL_S)
         raise TimeoutError(
-            f"Provider did not accept negotiation {negotiation_id} in "
-            f"{self._ACCEPT_TIMEOUT_S}s."
+            f"Provider did not accept / order not payable for negotiation "
+            f"{negotiation_id} in {self._ACCEPT_TIMEOUT_S}s."
         )
 
     async def _find_order_for_negotiation(
         self, negotiation_id: str, list_options_cls: type
-    ) -> str | None:
-        """Match the on-chain Order back to its negotiation via list_orders.
+    ) -> tuple[str | None, str]:
+        """Match the on-chain Order to its negotiation via list_orders.
 
-        We scan our BUYER-role orders (most recent first) and match on the
-        order's negotiation_id. Only a handful of orders exist per demo, so a
-        small page is plenty.
+        Returns (order_id, status_lowercase); (None, "") if not indexed yet.
 
-        CONFIRMED against the live API: list_orders REQUIRES role in
-        {"buyer", "provider"} and 400s (INVALID_PARAMETERS "role must be
-        'buyer' or 'provider'") on anything else — note this is a DIFFERENT
-        vocabulary from list_negotiations, which uses {"requester","provider"}.
-        As the purchaser we are the "buyer" here.
+        CONFIRMED live: list_orders REQUIRES role in {"buyer","provider"} and
+        400s otherwise. As the purchaser we are the "buyer".
         """
         opts = list_options_cls(
             role="buyer",
@@ -543,8 +598,10 @@ class LiveCapClient(CapClient):
             if str(_attr(order, "negotiation_id", default="")) == str(
                 negotiation_id
             ):
-                return str(_attr(order, "order_id", "id"))
-        return None
+                oid = str(_attr(order, "order_id", "id"))
+                ostatus = str(_attr(order, "status", default="") or "").lower()
+                return oid, ostatus
+        return None, ""
 
 
 def _attr(obj: object, *names: str, default: object = "__RAISE__") -> object:
