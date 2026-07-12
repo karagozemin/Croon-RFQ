@@ -3,86 +3,202 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CROON RFQ — recurring-demand engine for CROO agents</title>
+  <title>CROON RFQ — The market re-opens every run</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <h1>CROON <span>RFQ</span></h1>
-      <span id="cap-mode" class="mode-badge">…</span>
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- ============================= LANDING ============================= -->
+  <div id="view-landing" class="view">
+    <div class="ticker-band" aria-hidden="true">
+      <div class="ticker-track" id="ticker-top">
+        <span>WALLET-TRACKER&nbsp;0.10&nbsp;▲</span><span>POLYMIND&nbsp;0.10</span><span>GAS-ORACLE&nbsp;0.01&nbsp;▼</span><span>LISTING-COPY&nbsp;0.05</span><span>POLYMARKET-BROKER&nbsp;0.10&nbsp;▲</span><span>USDC/BASE&nbsp;SETTLED</span>
+        <span>WALLET-TRACKER&nbsp;0.10&nbsp;▲</span><span>POLYMIND&nbsp;0.10</span><span>GAS-ORACLE&nbsp;0.01&nbsp;▼</span><span>LISTING-COPY&nbsp;0.05</span><span>POLYMARKET-BROKER&nbsp;0.10&nbsp;▲</span><span>USDC/BASE&nbsp;SETTLED</span>
+      </div>
     </div>
-    <p class="pitch">
-      Every standing order is recurring demand. Every CROO agent is my supply.
-      <strong>On every run we re-open the market</strong> — quote, score, select, settle on-chain.
-      <em>This is not a cron job.</em>
-    </p>
-  </header>
 
-  <main>
-    <!-- LEFT: standing orders + create -->
-    <section class="col col-left">
-      <h2>Standing Orders</h2>
-      <ul id="order-list" class="order-list"></ul>
-
-      <details class="create-box">
-        <summary>+ New standing order</summary>
-        <form id="create-form">
-          <label>Name <input name="name" value="Wallet Risk Brief" required /></label>
-          <label>Task prompt
-            <textarea name="task_prompt" required>Produce a concise wallet risk brief for the treasury.</textarea>
-          </label>
-          <label>Category
-            <input name="category" value="risk" />
-          </label>
-          <div class="row">
-            <label>Budget/run (USDC)
-              <input name="budget_per_run_usdc" type="number" step="0.01" value="0.50" />
-            </label>
-            <label>Max total (USDC)
-              <input name="max_total_budget_usdc" type="number" step="0.01" value="5.00" />
-            </label>
-          </div>
-          <div class="row">
-            <label>Cadence (s)
-              <input name="cadence_seconds" type="number" value="300" />
-            </label>
-            <label>Max agents
-              <input name="max_agents_to_query" type="number" value="3" />
-            </label>
-          </div>
-          <button type="submit">Create</button>
-        </form>
-      </details>
+    <section class="hero">
+      <div class="hero-hashes" aria-hidden="true">
+        <span>0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f</span>
+        <span>0xf4bfa32db4d25ddec835b7570cdf36bdd7851192c6c6b514fbb265872bb1c2fd</span>
+        <span>0x387a240ff9ab48178c313f7558e10cacc438cdf82847dd9d10bb40ad803d0ed7</span>
+      </div>
+      <p class="hero-kicker mono">CROON RFQ — AUTONOMOUS PROCUREMENT ON THE CROO AGENT PROTOCOL</p>
+      <h1 class="hero-title">Every run, the market<br /><em>re&#8209;opens.</em></h1>
+      <p class="hero-sub mono">NOT A CRON JOB. A PROCUREMENT ENGINE.<br/>DISCOVER · QUOTE · SCORE · SETTLE — USDC ON BASE.</p>
+      <button class="cta" id="cta-enter"><span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>ENTER THE FLOOR</button>
+      <div class="hero-scroll mono" aria-hidden="true">SCROLL — ONE RUN, DISSECTED ↓</div>
     </section>
 
-    <!-- CENTER: the mini-RFQ money shot -->
-    <section class="col col-center">
-      <div class="rfq-head">
-        <h2>Mini-RFQ Live</h2>
-        <div class="rfq-actions">
-          <button id="run-now-btn" disabled>▶ Run now</button>
-          <button id="pause-btn" class="ghost" disabled>⏸ Pause</button>
+    <section class="anatomy">
+      <div class="section-head">
+        <span class="rule"></span><h2 class="mono">01 — ONE RUN, DISSECTED</h2><span class="rule"></span>
+      </div>
+      <div class="anatomy-grid" id="anatomy-grid">
+        <div class="step" data-step="1"><div class="step-n mono">01</div><h3>Discover</h3><p>2–3 live CROO agents pulled onto the floor. The roster is real supply, not a hardcoded vendor.</p><pre class="mono">candidates_discovered
+["Wallet Tracker","Polymind","Gas Oracle"]</pre></div>
+        <div class="step" data-step="2"><div class="step-n mono">02</div><h3>Quote</h3><p>Parallel RFQ under a strict timeout. Non-responders are dropped; the round proceeds.</p><pre class="mono">quote_received
+{"price_usdc":"0.10","eta":20,"conf":0.91}</pre></div>
+        <div class="step" data-step="3"><div class="step-n mono">03</div><h3>Score</h3><p>Transparent weighted scoring. Over-budget bids are excluded before scoring — a hard rule.</p><pre class="mono">score = 0.4·price + 0.35·rep + 0.25·speed</pre></div>
+        <div class="step" data-step="4"><div class="step-n mono">04</div><h3>Select</h3><p>Best score under budget wins. Every run stores a human-readable reason.</p><pre class="mono">"best score under budget: score 0.83,
+ price 0.20 USDC, eta 20s, rep 0.91"</pre></div>
+        <div class="step" data-step="5"><div class="step-n mono">05</div><h3>Settle</h3><p>The winner is hired via CAP and paid in USDC on Base. Real chain, real money.</p><pre class="mono">payment_completed
+tx 0xc09e8eab…df9d53f</pre></div>
+        <div class="step" data-step="6"><div class="step-n mono">06</div><h3>Receipt</h3><p>Signed, proof-bundled receipt: every bidder, the winner and why, tx hash, output hash.</p><pre class="mono">receipt_generated
+sha256:9f2ae4…</pre></div>
+      </div>
+    </section>
+
+    <section class="proof">
+      <div class="section-head"><span class="rule"></span><h2 class="mono">02 — PROOF, NOT PROMISES</h2><span class="rule"></span></div>
+      <p class="proof-sub">Three real, paid runs against three distinct live counterparties. Open any hash on BaseScan.</p>
+      <div class="receipt-wall">
+        <a class="receipt" target="_blank" rel="noopener" href="https://basescan.org/tx/0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f">
+          <div class="r-head mono">CROON RFQ · RECEIPT #001</div>
+          <div class="r-row"><span>COUNTERPARTY</span><b>WALLET TRACKER</b></div>
+          <div class="r-row"><span>AMOUNT</span><b>0.10 USDC</b></div>
+          <div class="r-row"><span>NETWORK</span><b>BASE</b></div>
+          <div class="r-tx mono">0xc09e8eab…e0df9d53f</div>
+          <div class="r-stamp mono">SETTLED ON BASE</div>
+        </a>
+        <a class="receipt" target="_blank" rel="noopener" href="https://basescan.org/tx/0xf4bfa32db4d25ddec835b7570cdf36bdd7851192c6c6b514fbb265872bb1c2fd">
+          <div class="r-head mono">CROON RFQ · RECEIPT #002</div>
+          <div class="r-row"><span>COUNTERPARTY</span><b>POLYMIND</b></div>
+          <div class="r-row"><span>AMOUNT</span><b>0.10 USDC</b></div>
+          <div class="r-row"><span>NETWORK</span><b>BASE</b></div>
+          <div class="r-tx mono">0xf4bfa32d…65872bb1c2fd</div>
+          <div class="r-stamp mono">SETTLED ON BASE</div>
+        </a>
+        <a class="receipt" target="_blank" rel="noopener" href="https://basescan.org/tx/0x387a240ff9ab48178c313f7558e10cacc438cdf82847dd9d10bb40ad803d0ed7">
+          <div class="r-head mono">CROON RFQ · RECEIPT #003</div>
+          <div class="r-row"><span>COUNTERPARTY</span><b>POLYMARKET BROKER</b></div>
+          <div class="r-row"><span>AMOUNT</span><b>0.10 USDC</b></div>
+          <div class="r-row"><span>NETWORK</span><b>BASE</b></div>
+          <div class="r-tx mono">0x387a240f…40ad803d0ed7</div>
+          <div class="r-stamp mono">SETTLED ON BASE</div>
+        </a>
+      </div>
+    </section>
+
+    <section class="funeral">
+      <div class="section-head"><span class="rule"></span><h2 class="mono">03 — THE CRON JOB FUNERAL</h2><span class="rule"></span></div>
+      <div class="funeral-cols">
+        <div class="f-col f-dead">
+          <h3 class="mono">CRON JOB †</h3>
+          <p class="strike">Re-runs the same command.</p>
+          <p class="strike">Hard-wired to one provider.</p>
+          <p class="strike">No price discipline.</p>
+          <p class="strike">Stateless. Forgets everything.</p>
+          <p class="strike">Crashes on provider failure.</p>
+          <p class="strike">No proof of work or spend.</p>
+        </div>
+        <div class="f-col f-alive">
+          <h3 class="mono">CROON RFQ</h3>
+          <p>Re-opens a market, every run.</p>
+          <p>Competitively selects among agents.</p>
+          <p>Hard budget rule — over-budget bids die.</p>
+          <p>Stateful: budgets, spend, full history.</p>
+          <p>Budget-protecting fallback ladder.</p>
+          <p>Signed receipt with on-chain tx hash.</p>
         </div>
       </div>
-
-      <div id="rfq-order-meta" class="order-meta muted">Select a standing order →</div>
-
-      <ol id="rfq-stream" class="rfq-stream"></ol>
     </section>
 
-    <!-- RIGHT: run history -->
-    <section class="col col-right">
-      <h2>Run History</h2>
-      <div id="order-summary" class="order-summary muted">—</div>
-      <table class="run-table">
-        <thead>
-          <tr><th>#</th><th>Mode</th><th>Winner</th><th>Paid</th><th>Status</th><th>Tx</th></tr>
-        </thead>
-        <tbody id="run-rows"></tbody>
-      </table>
+    <section class="final-cta">
+      <p class="final-line">The floor is <em>open.</em></p>
+      <button class="cta" id="cta-launch"><span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>LAUNCH CROON</button>
+      <p class="mono final-foot">MIT © 2026 CROON RFQ · PYTHON 3.11 · FASTAPI · CROO-SDK · USDC ON BASE</p>
     </section>
-  </main>
+  </div>
+
+  <!-- ============================== INTRO ============================== -->
+  <div id="view-intro" class="view hidden">
+    <div class="intro-stage">
+      <div class="intro-term mono" id="intro-term"></div>
+      <svg id="intro-ring" viewBox="0 0 400 400" width="340" height="340">
+        <circle id="ring-c" cx="200" cy="200" r="140" fill="none" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="880" stroke-dashoffset="880"/>
+        <g id="ring-nodes"></g>
+      </svg>
+      <div class="intro-skip mono">PRESS <b>ESC</b> TO SKIP</div>
+    </div>
+  </div>
+
+  <!-- =============================== APP =============================== -->
+  <div id="view-app" class="view hidden">
+    <header class="cmd-bar">
+      <div class="cb-left">
+        <span class="wordmark" id="app-logo">CROON<span> RFQ</span></span>
+        <span class="mode-pill mono" id="mode-pill">● …</span>
+      </div>
+      <div class="cb-ticker mono" id="app-ticker"><div class="ticker-track" id="app-ticker-track"></div></div>
+      <div class="cb-right mono" id="spend-meter">Σ —</div>
+    </header>
+
+    <main class="floor">
+      <!-- THE BOOK -->
+      <aside class="book">
+        <div class="panel-title mono">THE BOOK <span class="pt-sub">/ STANDING ORDERS</span></div>
+        <div class="ledger-lines" id="order-list"></div>
+        <button class="ghost-btn mono" id="new-order-btn">+ NEW ORDER</button>
+      </aside>
+
+      <!-- THE AUCTION -->
+      <section class="auction">
+        <div class="panel-title mono">THE AUCTION <span class="pt-sub" id="auction-sub">/ SELECT AN ORDER</span></div>
+        <div class="stage" id="stage">
+          <div class="stage-idle" id="stage-idle">
+            <div class="idle-meta" id="idle-meta"></div>
+            <button class="cta big" id="run-now-btn" disabled><span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>▶ OPEN THE MARKET</button>
+            <div class="idle-actions"><button class="ghost-btn mono" id="pause-btn" disabled>⏸ PAUSE</button></div>
+          </div>
+          <div class="stage-live hidden" id="stage-live">
+            <div class="budget-line mono" id="budget-line">BUDGET LINE — <b id="budget-val"></b> USDC</div>
+            <div class="bidders" id="bidders"></div>
+            <div class="stage-log mono" id="stage-log"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- THE LEDGER -->
+      <aside class="ledger">
+        <div class="panel-title mono">THE LEDGER <span class="pt-sub">/ RUN HISTORY</span></div>
+        <div class="ledger-summary mono" id="ledger-summary">—</div>
+        <div class="run-lines" id="run-rows"></div>
+      </aside>
+    </main>
+
+    <!-- NEW ORDER SHEET -->
+    <div class="sheet-veil hidden" id="sheet-veil"></div>
+    <div class="sheet hidden" id="order-sheet">
+      <div class="panel-title mono">NEW STANDING ORDER <button class="x-btn mono" id="sheet-close">ESC</button></div>
+      <form id="create-form">
+        <label class="mono">NAME<input name="name" value="Wallet Risk Brief" required /></label>
+        <label class="mono">TASK PROMPT<textarea name="task_prompt" required>Produce a concise wallet risk brief for the treasury.</textarea></label>
+        <label class="mono">CATEGORY<input name="category" value="risk" /></label>
+        <div class="frow">
+          <label class="mono">BUDGET / RUN (USDC)<input name="budget_per_run_usdc" type="number" step="0.01" value="0.50" /></label>
+          <label class="mono">MAX TOTAL (USDC)<input name="max_total_budget_usdc" type="number" step="0.01" value="5.00" /></label>
+        </div>
+        <div class="frow">
+          <label class="mono">CADENCE (S)<input name="cadence_seconds" type="number" value="300" /></label>
+          <label class="mono">MAX AGENTS<input name="max_agents_to_query" type="number" value="3" /></label>
+        </div>
+        <div class="sheet-preview mono" id="sheet-preview"></div>
+        <button type="submit" class="cta">FILE THE ORDER</button>
+      </form>
+    </div>
+
+    <!-- RUN DETAIL DIALOG -->
+    <div class="dialog-veil hidden" id="dialog-veil"></div>
+    <div class="dialog hidden" id="run-dialog">
+      <div class="panel-title mono">RUN DETAIL <button class="x-btn mono" id="dialog-close">ESC</button></div>
+      <div id="run-dialog-body"></div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>
