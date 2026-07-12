@@ -1,396 +1,301 @@
-# CROON RFQ
+<div align="center">
 
-**A recurring-demand engine for CROO agents.**
+# 🛰️ CROON RFQ
 
-> Every standing order is recurring demand. Every CROO agent is my supply.
-> The owner owns an autonomous revenue engine — not rented software.
+### An autonomous, recurring-demand engine for the CROO Agent Protocol
 
-Users (humans or agents) create a **standing order** — a recurring job with a
-budget and a cadence. On **every run**, CROON re-opens the market: it runs a
-lightweight competitive selection (**mini-RFQ**) across 2–3 candidate CROO
-agents, scores them, picks the best under budget, hires the winner via **CAP**,
-pays in **USDC on Base**, and returns a proof-bundled receipt. It keeps a full
-run history.
+**Every standing order is recurring demand. Every CROO agent is my supply.**
+**The owner owns an autonomous revenue engine — not rented software.**
 
----
+`Python 3.11+` · `FastAPI` · `SQLModel` · `croo-sdk` · `USDC on Base`
 
-## This is NOT a cron job
-
-A cron job blindly re-invokes the same fixed endpoint. CROON does something
-fundamentally different: **on every single run it re-opens a competitive
-market.**
-
-- It **discovers** candidate agents fresh each run.
-- It **requests quotes** (price, ETA, confidence) from each candidate.
-- It **scores** them (price × reputation × speed) and **selects a winner under
-  budget**.
-- It **settles on-chain** via CAP and emits a **signed receipt**.
-- It maintains **stateful, budgeted, historical commercial relationships** — not
-  a stateless timer.
-
-The differentiator lives in the code: see `croon/engine.py` (the run pipeline)
-and `croon/scoring.py` (the transparent scoring function). The demo UI shows the
-mini-RFQ moment live.
+</div>
 
 ---
 
-## Architecture (4 layers, kept separate)
+## What it is
+
+**CROON RFQ** turns a recurring need into a *standing order*: a budgeted, recurring
+job. On **every single run**, CROON does not just re-hire the same agent — it
+**re-opens the market**:
+
+> **discover 2–3 CROO agents → request quotes → score (price × reputation × speed)
+> → select the best under budget → hire the winner via CAP → pay in USDC on Base →
+> emit a signed, proof-bundled receipt → append to run history.**
+
+This is the core differentiator, and it is visible in both the code and the demo:
+**this is not a cron job and not a plain orchestrator.** A cron job re-runs the
+same command. CROON re-runs a *competitive procurement*.
+
+### ✅ Proof it works — real on-chain settlements
+
+CROON has executed **real, paid runs on Base** against **3 distinct live CROO
+counterparties** (clears the anti-sybil ≥3 unique-counterparty bar):
+
+| # | Counterparty | Amount | BaseScan tx |
+|---|--------------|--------|-------------|
+| 1 | Wallet Tracker | 0.10 USDC | `0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f` |
+| 2 | Polymind | 0.10 USDC | `0xf4bfa32db4d25ddec835b7570cdf36bdd7851192c6c6b514fbb265872bb1c2fd` |
+| 3 | Polymarket Broker | 0.10 USDC | `0x387a240ff9ab48178c313f7558e10cacc438cdf82847dd9d10bb40ad803d0ed7` |
+
+> Each is a genuine `pay_order` USDC transfer on Base, negotiated + settled through
+> the real `croo-sdk`. Open any hash at `https://basescan.org/tx/<hash>`.
+
+---
+
+## Why this matters (the "not a cron job" section)
+
+| A cron job / orchestrator | **CROON RFQ** |
+|---------------------------|---------------|
+| Re-runs the same command | **Re-opens a market** every run |
+| Hard-wired to one provider | **Competitively selects** among 2–3 agents |
+| No price discipline | **Hard budget rule** — over-budget bids excluded |
+| Stateless | **Stateful**: budgets, spend, full run history in SQLite |
+| Crashes on provider failure | **Budget-protecting fallback ladder**, never crashes |
+| No proof of work/spend | **Signed receipt**: every bidder, the winner + *why*, tx hash, output hash, receipt hash |
+
+The standing order is a **historical commercial relationship**, not a script. The
+owner accrues run history, spend accounting, and a portfolio of on-chain receipts —
+an asset they own, not a SaaS subscription they rent.
+
+---
+
+## Architecture at a glance
+
+Four thin layers, one dependency direction, and a single door to CAP. Full detail
+(with diagrams) in **[`ARCHITECTURE.md`](./ARCHITECTURE.md)**.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        CROON RFQ (off-chain)                        │
-│                                                                     │
-│  Layer A — Standing Order Store      croon/models.py + db.py        │
-│     Persists standing orders + run history (SQLite/SQLModel).       │
-│     Budgets & order state live HERE, never in a contract.           │
-│                                                                     │
-│  Layer B — Scheduler / Trigger       croon/scheduler.py             │
-│     In-process interval loop + run_now (demo-grade, not prod cron). │
-│                                                                     │
-│  Layer C — Mini-RFQ Engine           croon/engine.py + scoring.py   │
-│     discover → quote → score → select winner under budget.          │
-│     (THE differentiator — kept thin.)                               │
-│                                                                     │
-│  Layer D — Settlement + Receipt      croon/engine.py                │
-│     hire+pay winner → assemble receipt → append to run history.     │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │ ALL CAP calls go through ONE boundary
-                                ▼
-                    ┌───────────────────────────┐
-                    │   croon/cap_client.py       │
-                    │   CapClient (interface)     │
-                    │   ├─ MockCapClient (now)    │
-                    │   └─ LiveCapClient (step 4) │  ── ON-CHAIN ──▶ USDC on Base
-                    └───────────────────────────┘
+HTTP API + Demo UI  (croon/api.py, croon/static/)
+        │
+   ┌────┴─────────────┐         ┌──────────────────────────────┐
+   │ B: Scheduler     │◀───────▶│ A: Standing Order Store        │
+   │ cadence + run_now│  state  │ StandingOrder · Run (SQLite)   │
+   └────┬─────────────┘         └──────────────────────────────┘
+        │ execute_run(order)
+        ▼
+   C+D: Mini-RFQ Engine + Settlement  (croon/engine.py, scoring.py)
+   discover → quote → score → select → hire+pay → delivery → receipt
+        │  (the ONLY door to CAP)
+        ▼
+   CapClient boundary  (croon/cap_client.py)
+   ├─ MockCapClient   deterministic fake market (no keys/network)
+   └─ LiveCapClient   real croo-sdk → USDC on Base
 ```
 
-**Off-chain (our DB/logic):** scheduling, budget accounting, candidate
-discovery, mini-RFQ, scoring, selection, run history, receipts.
-
-**On-chain (via CAP only):** the USDC payment/settlement to the winning agent,
-and anchoring the receipt hash. No standing-order state or budgets on-chain; no
-custom escrow contract.
+- **Layer A — Standing Order Store** (`models.py`): budgets, cadence, run history.
+- **Layer B — Scheduler** (`scheduler.py`): in-process cadence loop + `run_now`.
+- **Layer C — Mini-RFQ Engine** (`engine.py`, `scoring.py`): the differentiator.
+- **Layer D — Settlement + Receipt** (`engine.py`, `LiveCapClient`): pay + prove.
 
 ---
 
-## Current status
+## Scoring (transparent, documented, `croon/scoring.py`)
 
-This repo currently implements **Build Order steps 1–3** (spec §11):
+```
+score = w_price · price_score  +  w_rep · rep_score  +  w_speed · speed_score
+```
 
-- [x] **Step 1** — Repo scaffold: FastAPI app, SQLModel models, `.env` loading,
-      README, MIT LICENSE.
-- [x] **Step 2** — `MockCapClient` + full pipeline against mocks: create
-      standing order → `run_now` → collect mock quotes → score → select → pay
-      (mock) → build receipt → store run.
-- [x] **Step 3** — Demo UI rendering the mini-RFQ moment + run history.
-- [x] **Step 4** — Real `CapClient` (`LiveCapClient`) wired to the official
-      CROO CAP Python SDK (`croo-sdk`), and **one real end-to-end paid run
-      settled on Base**. The negotiate → pay path is verified on-chain:
-      **USDC transferred, tx status `Success`.** See *On-chain proof* below.
-- [ ] **Steps 5–7** — Fallback timeout mechanism, the two base agents, hardening.
-
-
-Everything below runs **without any network or keys** thanks to `MockCapClient`.
+- **Hard budget rule:** any quote with `price > budget_per_run` is **excluded
+  before scoring** (still shown in the UI, with the exclusion reason).
+- `price_score` / `speed_score`: normalized over the eligible set — cheaper /
+  faster scores higher.
+- `rep_score`: MVP placeholder = the quote's self-reported `confidence`.
+  Deliberately **not** a reputation oracle (out of scope).
+- Default weights `w_price=0.4, w_rep=0.35, w_speed=0.25` — configurable in `.env`.
+- Every run stores a human-readable `selection_reason`, e.g.
+  `"best score under budget: score 0.83, price 0.20 USDC, eta 20s, rep 0.91"`.
 
 ---
 
-## On-chain proof (live run on Base)
+## The `CapClient` boundary + demo safety net
 
-One real end-to-end paid run has settled on Base via CAP. The winning agent was
-hired through `negotiate_order → get_negotiation → pay_order`, and a real USDC
-transfer landed on-chain:
-
-| Field            | Value                                                                |
-| ---------------- | -------------------------------------------------------------------- |
-| Network          | Base mainnet                                                         |
-| Token            | Native USDC (`0x8335…2913`)                                          |
-| Tx status        | **Success**                                                          |
-| Tx hash          | `0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f` |
-| BaseScan         | `https://basescan.org/tx/0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f` |
-
-Verify independently against a Base RPC (decodes the ERC-20 `Transfer` log):
+**All** CAP interaction goes through `croon/cap_client.py` — nowhere else. This is
+the isolation contract that keeps SDK uncertainty in one place and lets us flip the
+entire app between fake and real with **one env var**:
 
 ```bash
-TX=0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f
-curl -s https://mainnet.base.org -X POST -H "Content-Type: application/json" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getTransactionReceipt\",\"params\":[\"$TX\"]}" \
-  | jq '.result.status'   # -> "0x1" (Success)
+CROON_CAP_MODE=mock   # deterministic fake market — no keys, no network, no wallet
+CROON_CAP_MODE=live   # real croo-sdk → negotiate + pay USDC on Base
 ```
 
-> **Delivery vs. payment.** Payment is final on-chain the moment `pay_order`
-> confirms. The provider's *deliverable* can arrive later, within its SLA window
-> (up to ~30 min); use `scripts/repoll_delivery.py <order_id>` to re-check a
-> settled order's delivery after time has passed — a 404 right after payment does
-> **not** mean the work was never delivered.
+### Exact CAP SDK methods used (`LiveCapClient`)
 
-Runs carry a `mode` column (`mock` | `live`) so mock demo runs and real on-chain
-runs are never conflated in history.
+| Our interface | Real `croo-sdk` |
+|---------------|-----------------|
+| `hire_and_pay` | `AgentClient.negotiate_order(NegotiateOrderRequest)` → poll `get_negotiation` / `list_orders(role="buyer")` until order status `created` → `pay_order(order_id)` → `tx_hash` |
+| `get_delivery` | `AgentClient.get_delivery(order_id)` (async; polled) |
+| `discover_agents` | **No SDK primitive** — configured roster of Store `service_id`s |
+| `request_quote` | **No native quote** — derived from listed price/SLA (no on-chain action) |
+
+Auth: `AgentClient(Config(...), "croo_sk_...")`. Confirmed live behaviours the
+adapter handles: the `creating → created` order lifecycle (paying too early 400s
+`INVALID_STATUS`), negotiation→order resolution via `list_orders`, provider-enforced
+`requirements` with no describe endpoint, and **asynchronous delivery** (a paid run
+is valid on its tx hash even if the deliverable arrives later —
+`paid_delivery_pending`).
 
 ---
 
-## Prerequisites
+## Fallback = risk management (spec §7)
 
+CROON never crashes a run and never wrong-routes work:
 
-- **Python 3.11–3.13.** Use `python3.13` if it is available.
-  > **Environment note:** Python **3.14** currently ships with a broken
-  > `ensurepip`/wheel setup on some macOS installs (`python -m venv` fails at the
-  > pip bootstrap step). This is an environment quirk, not a project limitation —
-  > create the venv with `python3.13` and everything works.
+- **< 1 valid quote** (network stall / no responders) → route to a
+  **capability-matched** base agent, hire+pay normally, mark `fallback_used`.
+- **All quotes over budget** → try a capable fallback once.
+- **Winner refuses to transact** (negotiation REJECTED/EXPIRED/timeout) → route to
+  a *different* capable fallback.
+- **No capability-appropriate provider** → `no_provider_available`, **spend = 0**.
 
-## Quick start (single command)
-
-
-```bash
-# 1. Create venv + install deps
-python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
-
-# 2. Configure (mock mode needs no keys)
-cp .env.example .env
-
-# 3. (Optional) seed a standing order with 3 completed runs for history
-.venv/bin/python scripts/seed.py
-
-# 4. Run the server + demo UI
-.venv/bin/python run.py
-```
-
-Then open **http://127.0.0.1:8000** and click **Run now** to watch a live
-mini-RFQ: quotes arrive → scoring → winner → payment → receipt.
+Capability matching means a "risk brief" is never routed to a gas oracle. This makes
+our two base agents **real supply**, not dead hedges.
 
 ---
 
-## Demo-day safety net: mock ↔ live via one env var
+## Two base agents (also the fallback pool, spec §10)
 
-```
-CROON_CAP_MODE=mock   # deterministic fake agents, no network, no keys (default)
-CROON_CAP_MODE=live   # real CROO CAP SDK (needs croo_sk_ key + funded wallet)
-```
+Standalone, CAP-callable, USDC-settling, Store-listable providers:
 
-The entire pipeline is identical in both modes because everything CAP-related is
-isolated behind `CapClient` (`croon/cap_client.py`). Nothing else in the
-codebase imports the SDK.
+1. **Listing Copy Agent** (`agents/listing_copy.py`) — repo/description →
+   Agent Store listing copy (tagline + 3 bullets + category). ~0.05 USDC.
+2. **Base Gas Oracle** (`agents/gas_oracle.py`) — current Base gas + estimated
+   USDC-transfer / CAP-call cost. ~0.01 USDC.
 
----
-
-## Environment variables
-
-See `.env.example` for the full list. Highlights:
-
-| Var                          | Default              | Purpose                                        |
-| ---------------------------- | -------------------- | ---------------------------------------------- |
-| `CROON_CAP_MODE`             | `mock`               | `mock` \| `live` — the demo safety net.        |
-| `CROON_DATABASE_URL`         | `sqlite:///croon.db` | Local state (SQLModel).                        |
-| `CROON_HOST` / `CROON_PORT`  | `127.0.0.1` / `8000` | HTTP server bind.                              |
-| `CROON_SCHEDULER_TICK_SECONDS` | `10`               | How often the in-process loop checks due orders. |
-| `CROON_RFQ_TIMEOUT_SECONDS`  | `10`                 | Per-run RFQ timeout → triggers fallback.       |
-| `CROON_W_PRICE/W_REP/W_SPEED`| `0.4/0.35/0.25`      | Scoring weights (documented below).            |
-
-Live-only vars (used only when `CROON_CAP_MODE=live`):
-
-| Var                          | Purpose                                                      |
-| ---------------------------- | ----------------------------------------------------------- |
-| `CROON_CROO_SDK_KEY`         | `croo_sk_...` key from the CROO Dashboard (sent as `X-SDK-Key`). |
-| `CROON_CROO_API_URL`         | CROO CAP API base URL.                                       |
-| `CROON_CROO_WS_URL`          | CROO CAP WebSocket URL (order/negotiation events).          |
-| `CROON_BASE_RPC_URL`         | Base RPC endpoint for on-chain USDC settlement.             |
-| `CROON_USDC_CONTRACT_ADDRESS`| Native USDC on Base (`0x8335…2913`). **Not** bridged USDbC — verify CAP settles in this token. |
-| `CROON_LIVE_CANDIDATES_JSON` | JSON roster of Store service ids used as RFQ candidates (the SDK has no discovery). |
-
-These are read by `LiveCapClient`; in mock mode they can stay blank.
+Served as live CAP providers by `croon/provider_worker.py` (SDK WebSocket → accept
+negotiation → deliver on `ORDER_PAID`).
 
 ---
 
 ## HTTP API (spec §8)
 
-| Method | Path                              | Purpose                              |
-| ------ | --------------------------------- | ------------------------------------ |
-| POST   | `/standing-orders`                | Create a standing order.             |
-| GET    | `/standing-orders`                | List standing orders.                |
-| GET    | `/standing-orders/{id}`           | Detail + full run history.           |
-| POST   | `/standing-orders/{id}/run-now`   | **Trigger a run immediately (demo).**|
-| POST   | `/standing-orders/{id}/pause`     | Pause.                               |
-| POST   | `/standing-orders/{id}/resume`    | Resume.                              |
-| GET    | `/standing-orders/{id}/events`    | Live event feed (`?after=<seq>`).    |
-| GET    | `/runs/{run_id}`                  | Full run detail incl. receipt bundle.|
-| GET    | `/`                               | Demo UI.                             |
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/standing-orders` | create a standing order |
+| `GET`  | `/standing-orders` | list |
+| `GET`  | `/standing-orders/{id}` | detail + run history |
+| `POST` | `/standing-orders/{id}/run-now` | **trigger a run now (demo critical)** |
+| `POST` | `/standing-orders/{id}/pause` | pause |
+| `POST` | `/standing-orders/{id}/resume` | resume |
+| `GET`  | `/standing-orders/{id}/events?after=<seq>` | live event feed for the UI |
+| `GET`  | `/runs/{run_id}` | full run detail incl. receipt bundle |
+| `GET`  | `/health` | mode + provider status |
+| `GET`  | `/` | demo UI |
 
 ### How `run_now` works
 
-1. `POST /standing-orders/{id}/run-now` delegates to the scheduler's `trigger()`
-   so cadence bookkeeping stays in one place.
-2. The engine (`execute_run`) opens the mini-RFQ:
-   `discover_agents` → `request_quote` on each candidate (bounded by
-   `CROON_RFQ_TIMEOUT_SECONDS`).
-3. Quotes are scored; anything over `budget_per_run` is hard-excluded.
-4. The winner is hired and paid via `CapClient.hire_and_pay` (mock tx in mock
-   mode; real USDC-on-Base tx in live mode).
-5. A receipt bundle is assembled (quotes, winner, reason, tx hash, timestamps,
-   output hash, receipt hash) and appended to run history.
-6. Every step emits an event the UI polls to render the live money shot.
+`POST /standing-orders/{id}/run-now` → `Scheduler.trigger(id)` → `execute_run(order)`.
+The engine persists a `Run` immediately, then streams events
+(`run_started → candidates_discovered → quote_received × N → quotes_scored →
+winner_selected → payment_pending → payment_completed → receipt_generated →
+run_completed`) to an in-memory bus. The UI polls `/events` (~1s) and renders the
+mini-RFQ moment live. Judges click one button and watch the market clear.
 
 ---
 
-## Scoring function (spec §6)
+## Quickstart (single command)
 
-Defined transparently in `croon/scoring.py`:
+```bash
+# 1. install
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
+# 2. configure (defaults to safe MOCK mode)
+cp .env.example .env
+
+# 3. run — serves API + demo UI on http://127.0.0.1:8000
+python run.py
 ```
-score = w_price * price_score + w_rep * reputation_score + w_speed * speed_score
+
+Open **http://127.0.0.1:8000**, create/seed a standing order, hit **Run now**, and
+watch quotes arrive → scoring → winner → payment → receipt.
+
+Seed a few runs for a populated history:
+
+```bash
+python -m scripts.seed
 ```
 
-- **price_score** — normalized so that a cheaper quote (still under budget)
-  scores higher.
-- **speed_score** — lower ETA scores higher.
-- **reputation_score** — MVP placeholder: the quote's self-reported/derived
-  confidence (a full reputation oracle is deliberately out of scope).
-- **Hard budget rule** — any quote with `price > budget_per_run` is **excluded**
-  before scoring.
-- **Default weights** — `w_price=0.4`, `w_rep=0.35`, `w_speed=0.25`
-  (configurable via env).
+### Going live (real USDC on Base)
 
-The winning score and a human-readable `selection_reason` are stored on every
-run, e.g.:
+1. Get a `croo_sk_...` key from the CROO Dashboard and **fund CROON's AA wallet
+   with USDC on Base** (payment precondition — the SDK raises insufficient-balance
+   otherwise).
+2. In `.env`:
+   ```bash
+   CROON_CAP_MODE=live
+   CROON_CROO_SDK_KEY=croo_sk_...
+   CROON_LIVE_CANDIDATES_JSON='[{"agent_id":"...","service_id":"...","name":"...","listed_price_usdc":"0.10","listed_eta_seconds":30,"reputation":0.7}]'
+   CROON_FALLBACK_SERVICE_ID=...      # our base agent's Store service id
+   CROON_FALLBACK_AGENT_ID=...
+   ```
+3. Execute one real end-to-end paid run (probe first — free, no spend):
+   ```bash
+   # dry run: negotiate + create order, stop BEFORE paying
+   CROON_CAP_MODE=live python -m scripts.live_order --agent-id <id> \
+     --requirements '{"market_id":"..."}' --probe-only
 
-> `best score under budget: score 0.6527, price 0.12 USDC, eta 40s, rep 0.72
-> (weights price=0.4, rep=0.35, speed=0.25)`
+   # real run: negotiate → create → pay USDC on Base → persist idempotently
+   CROON_CAP_MODE=live python -m scripts.live_order --agent-id <id> \
+     --requirements '{"market_id":"..."}'
+   ```
+
+Inspect on-chain runs:
+
+```bash
+sqlite3 croon.db -header -column \
+  "SELECT substr(id,1,8) run, winner_agent_id, amount_paid_usdc amt, tx_hash \
+   FROM run WHERE mode='live' ORDER BY started_at;"
+```
 
 ---
 
-## Fallback mechanism (spec §7 — planned, step 5)
+## Tests
 
-On each run the RFQ is sent with a strict per-run timeout
-(`CROON_RFQ_TIMEOUT_SECONDS`). If **fewer than 1 valid quote** returns, CROON
-will **not crash**: it emits *"No live bids received — budget protection active —
-routing to fallback provider"* and routes the job to one of **our own base
-agents** (real, hireable CAP agents), marking `run.fallback_used = True`. The
-`CapClient` interface and event plumbing already support this; the base agents
-land in step 6.
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+Covers the brokerage cycle (spend guard + **durable idempotency**: no double-pay
+across a simulated restart) and the provider worker.
 
 ---
 
-## The CapClient boundary (spec §4)
+## Known limitations (honest)
 
-`croon/cap_client.py` exposes the only surface the rest of the app depends on:
-
-```python
-class CapClient:
-    async def discover_agents(self, category, limit) -> list[AgentInfo]
-    async def request_quote(self, agent_id, task, timeout_s) -> Quote | None
-    async def hire_and_pay(self, agent_id, task, agreed_price_usdc) -> Settlement
-    async def get_delivery(self, order_id) -> Delivery
-```
-
-- **`MockCapClient`** — deterministic fake agents (Alpha, Beta, plus base-agent
-  fallbacks). Lets us build and test the entire pipeline offline.
-- **`LiveCapClient`** — wraps the real CROO CAP Python SDK (`croo-sdk`). All
-  uncertainty about the SDK lives here and nowhere else; the SDK is imported
-  **lazily** so mock mode never requires it to be installed.
-
-### Exact CAP SDK methods used (live mode)
-
-Auth: `AgentClient(Config(base_url, ws_url, rpc_url), "croo_sk_...")` — the key
-is sent as the `X-SDK-Key` header. Our interface maps onto the SDK **as the
-requester** like this:
-
-| CROON interface (`CapClient`) | CROO CAP SDK call(s)                                   | Notes |
-| ----------------------------- | ------------------------------------------------------ | ----- |
-| `discover_agents()`           | *(none — not an SDK primitive)*                        | The SDK has **no** search/discovery; accounts & services are set up in the Agent Store. Candidates therefore come from a **configured roster** of Store service ids (`CROON_LIVE_CANDIDATES_JSON`). Documented as honest emulation (spec §4). |
-| `request_quote()`             | *(none — derived)*                                     | CAP has **no native quote primitive**. A quote is **derived** from the candidate's listed price / SLA. We deliberately do **not** open a negotiation just to quote (that creates dangling on-chain state + gas). |
-| `hire_and_pay()`              | `negotiate_order()` → *(provider accepts)* → `get_negotiation()` (poll for `order_id`) → `pay_order(order_id)` | The real negotiation + **USDC-on-Base settlement** happens here, for the winner only. SDK auto-handles the ERC-20 approve. |
-| `get_delivery()`              | `get_delivery(order_id)`                               | Returns the hired agent's work product (`deliverable_text`). |
-
-Minor field-name variance across SDK versions is absorbed by a single `_attr()`
-helper in `cap_client.py` (again, isolated to this one file). The two spots that
-still need version confirmation against the installed build are marked with
-`TODO(verify)` — specifically the `negotiate_order` request shape.
-
-> **The missing price-discovery layer (a feature, not a fake auction).**
-> CAP today has **no native quote/discovery primitive** — agents publish a
-> price/SLA in the Agent Store, and that's it. CROON's mini-RFQ *adds the
-> layer CAP is missing*: it derives a quote from each candidate's listed
-> price/SLA, scores them, and settles competitively under budget. We say this
-> out loud in the demo. It is deliberately **not** a simulated auction with
-> invented bids — every number traces back to a real Store listing, and the
-> only on-chain action is the single winning payment.
-
-### Payment precondition (live mode)
-
-Before CROON can pay providers, **CROON's own agent (AA) wallet must be funded
-with USDC on Base.** If it isn't, `pay_order` raises an insufficient-balance
-error (`is_insufficient_balance`). Fund the AA wallet address shown in the CROO
-Dashboard with USDC on Base before attempting a live run.
-
-### Safe go-live sequence (run this before spending a cent)
-
-The `croo_sk_...` mapping (`negotiate_order → get_negotiation → pay_order`) is
-coded but must be verified against the real `croo-sdk` source before a live
-payment. Follow this staged rollout:
-
-1. **Read-only first.** With `CROON_CAP_MODE=live`, exercise only discovery/
-   quote-emulation + `get_negotiation` polling. **No `pay_order` yet.** If auth
-   and negotiation resolve cleanly, the key/SDK wiring is correct.
-2. **One safe micro-run.** Trigger `run_now` with the smallest possible budget,
-   routing to **your own base agent as the winner** (self-hire = a controlled
-   first payment). Capture the tx and verify it on BaseScan.
-3. **Only if that tx is clean** → enable the fallback timeout (step 5) and
-   normal candidate runs.
-4. **Keep `CROON_CAP_MODE` flippable.** If the live net stalls on demo day, flip
-   back to `mock`. That safety net is the single most valuable asset here.
-
-> V1 Pioneers note: completing CAP integration testing (the micro-run above) is
-> reported to qualify for a $10 USDC reward — a free byproduct of go-live.
+- **`discover_agents` is roster-based in live mode.** The SDK exposes no
+  search/discovery, so live candidates come from a configured list of Store
+  `service_id`s. Documented and isolated in `LiveCapClient`.
+- **Quotes are derived, not negotiated.** CAP has no native quote primitive; a
+  quote is the candidate's listed price/SLA. Only the winner is actually
+  negotiated + paid (quoting stays cheap and side-effect free).
+- **Reputation is a placeholder** (quote confidence / prior successful runs), not a
+  real reputation oracle — intentionally out of scope.
+- **Delivery is asynchronous.** A freshly paid run may show
+  `paid_delivery_pending`; the deliverable is re-fetchable later. The tx hash is
+  the proof of spend.
+- **USDC token:** targets canonical native USDC on Base
+  (`0x8335…2913`), not bridged USDbC. Verify before large spends.
+- **Scheduler is demo-grade** — a simple in-process interval loop, not production
+  cron.
 
 ---
 
 ## Project layout
 
 ```
-Croon-RFQ/
-├─ croon/
-│  ├─ __init__.py
-│  ├─ config.py          # env/.env settings (pydantic-settings)
-│  ├─ schemas.py         # Pydantic I/O contracts (SDK-agnostic)
-│  ├─ models.py          # SQLModel tables: StandingOrder, Run (Layer A)
-│  ├─ db.py              # SQLite engine + sessions
-│  ├─ cap_client.py      # CapClient boundary: Mock + Live (all CAP lives here)
-│  ├─ scoring.py         # transparent scoring function (Layer C)
-│  ├─ engine.py          # mini-RFQ + settlement pipeline (Layers C+D)
-│  ├─ events.py          # in-memory event bus for the live UI
-│  ├─ scheduler.py       # in-process cadence loop + run_now (Layer B)
-│  ├─ api.py             # FastAPI: HTTP API + serves UI
-│  └─ static/            # single-page demo UI (html/css/js)
-├─ scripts/seed.py       # seed a standing order + 3 runs for history
-├─ run.py                # single-command entrypoint
-├─ requirements.txt
-├─ .env.example
-├─ LICENSE               # MIT
-└─ README.md
+croon/            app package — api, scheduler, engine, scoring, cap_client,
+                  brokerage, provider_worker, models, schemas, config, events, db
+croon/static/     single-page demo UI (index.html, app.js, style.css)
+agents/           two standalone base agents (listing_copy, gas_oracle) + provider
+scripts/          live_order, seed, readiness_check, probes, and other tooling
+tests/            brokerage + provider_worker unit tests
+ARCHITECTURE.md   deep-dive with diagrams
 ```
-
----
-
-## Known limitations
-
-- **Live CAP proven with one on-chain run; not yet hardened for volume.**
-  `LiveCapClient` is wired to the real `croo-sdk` and has settled **one real
-  paid run on Base** (see *On-chain proof*). Additional live runs still need an
-  SDK key + USDC-funded AA wallet (operator-supplied). The two base agents and
-  the fallback timeout path arrive in build-order steps 5–7. Mock mode is fully
-  functional today and remains the demo-day default.
-- **Delivery may lag payment.** Payment finality and work delivery are decoupled:
-  a provider can deliver anytime within its SLA window after `pay_order`
-  confirms. Re-poll with `scripts/repoll_delivery.py` rather than treating an
-  immediate post-payment 404 as a failure.
-
-- **Scheduler is demo-grade.** A single in-process interval loop, not durable
-  production cron; jobs don't survive restarts mid-run.
-- **Reputation is a placeholder** (quote confidence), not a real oracle — by
-  design (out of scope).
-- **Event bus is in-memory** and per-process; it resets on restart.
-
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE).
+[MIT](./LICENSE) © 2026 CROON RFQ
