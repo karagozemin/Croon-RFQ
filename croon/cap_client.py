@@ -339,7 +339,11 @@ class LiveCapClient(CapClient):
                     is_base_agent=bool(r.get("is_base_agent", False)),
                     service_id=r.get("service_id"),
                     listed_eta_seconds=r.get("listed_eta_seconds"),
+                    # Optional per-service requirements schema override (dict or
+                    # str). See AgentInfo.requirements_template / hire_and_pay.
+                    requirements_template=r.get("requirements_template"),
                 )
+
             )
         if category:
             filtered = [a for a in agents if a.category == category]
@@ -383,13 +387,14 @@ class LiveCapClient(CapClient):
 
         req = NegotiateOrderRequest(
             service_id=agent.service_id,
-            requirements=task.task_prompt,
-            # Acceptance criteria carried as metadata (SDK metadata is a string).
+            requirements=self._build_requirements(agent, task),
+            # Acceptance criteria also carried as metadata (SDK metadata is a string).
             metadata=json.dumps(
                 {"acceptance_criteria": task.acceptance_criteria}
             ),
             requester_agent_id=self._requester_agent_id,
         )
+
 
         # 1) Requester initiates the negotiation for the winning service.
         neg = await self._client.negotiate_order(req)
@@ -441,7 +446,42 @@ class LiveCapClient(CapClient):
 
     # --- helpers -----------------------------------------------------------
 
+    @staticmethod
+    def _build_requirements(agent: AgentInfo, task: TaskSpec) -> str:
+        """Build the CAP `requirements` string for a negotiation.
+
+        CAP enforces the requirements schema PROVIDER-SIDE and there is NO
+        discovery/describe endpoint to introspect it (the SDK exposes only
+        /orders/* and /objects/*). Sending an object with fields a service
+        doesn't recognise gets rejected (INVALID_PARAMETERS: unsupported
+        requirement field "<field>"). So we support three modes, in priority:
+
+          1) Per-service OVERRIDE (agent.requirements_template):
+             - dict -> merged with {task_prompt, acceptance_criteria} and JSON
+               encoded (operator opts in to fields the service accepts).
+             - str  -> used verbatim (operator supplies the exact payload).
+          2) SCHEMA-AGNOSTIC DEFAULT (no template): encode the prompt as a bare
+             JSON string, e.g. json.dumps("do X") == '"do X"'. This is valid
+             JSON (passes "requirements must be valid JSON") yet has NO object
+             fields, so there is nothing for a provider to reject as an
+             unsupported field. Our own base/main providers read the raw
+             requirements string as the prompt, so this stays compatible.
+        """
+        template = agent.requirements_template
+        if isinstance(template, str):
+            return template
+        if isinstance(template, dict):
+            merged = {
+                **template,
+                "task_prompt": task.task_prompt,
+                "acceptance_criteria": task.acceptance_criteria,
+            }
+            return json.dumps(merged)
+        # Schema-agnostic default: bare JSON string, no rejectable object fields.
+        return json.dumps(task.task_prompt)
+
     async def _await_order_created(self, negotiation_id: str) -> str:
+
         """Poll until the provider accepts the negotiation and an Order exists.
 
         Verified against croo-sdk: `Negotiation` has NO `order_id` field, so we

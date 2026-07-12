@@ -292,14 +292,63 @@ async def execute_run(
         winner_info = _find_agent(candidates + fallback_roster, winner.agent_id)
 
         emit("payment_pending", agent_name=winner.agent_name)
-        settlement = await cap.hire_and_pay(
-            winner_info, task, winner.price_usdc
-        )
+        try:
+            settlement = await cap.hire_and_pay(
+                winner_info, task, winner.price_usdc
+            )
+        except Exception as hire_exc:  # noqa: BLE001
+            # §7 (hire-time): the selected live provider refused to transact
+            # (negotiation REJECTED/EXPIRED or timed out). A non-cooperative
+            # provider is a supply failure just like a no-bid — so we DON'T
+            # crash. We route to a capability-matched base agent (which we
+            # control and which auto-accepts), spending nothing on the reject.
+            eligible_fb = [
+                a for a in capable_fallbacks if a.agent_id != winner.agent_id
+            ]
+            if fallback_used or not eligible_fb:
+                raise  # no cooperative fallback left -> outer handler
+            emit(
+                "fallback_triggered",
+                message=(
+                    f"Winner '{winner.agent_name}' declined to transact "
+                    f"({hire_exc}). Budget protection active — routing to "
+                    "capability-matched fallback provider."
+                ),
+            )
+            fb_quotes = await _collect_quotes(
+                cap, eligible_fb, task,
+                settings.rfq_timeout_seconds, emit, is_fallback=True,
+            )
+            fallback_used = True
+            selection = score_quotes(fb_quotes, order.budget_per_run_usdc)
+            emit("quotes_scored", quotes=[_qr_json(r) for r in selection.scored_quotes])
+            if selection.winner is None:
+                return _no_provider(
+                    "winner declined and no capability-matched fallback under "
+                    "budget — budget protected, no spend"
+                )
+            winner = selection.winner
+            winner_info = _find_agent(candidates + fallback_roster, winner.agent_id)
+            emit(
+                "winner_selected",
+                winner={
+                    "agent_id": winner.agent_id,
+                    "agent_name": winner.agent_name,
+                    "price_usdc": str(winner.price_usdc),
+                    "score": winner.score,
+                },
+                reason=selection.reason,
+            )
+            emit("payment_pending", agent_name=winner.agent_name)
+            settlement = await cap.hire_and_pay(
+                winner_info, task, winner.price_usdc
+            )
         emit(
             "payment_completed",
             tx_hash=settlement.tx_hash,
             amount_usdc=str(settlement.amount_paid_usdc),
         )
+
 
         # --- Layer D: fetch delivery --------------------------------------
         delivery = await cap.get_delivery(settlement.order_id)

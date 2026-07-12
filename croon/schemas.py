@@ -32,6 +32,16 @@ class AgentInfo(BaseModel):
     # to DERIVE a quote (CAP has no native quote primitive — spec §4).
     service_id: str | None = None
     listed_eta_seconds: int | None = None
+    # Live mode: optional per-service `requirements` schema override. CAP has NO
+    # discovery/describe endpoint (only /orders/* and /objects/*), so a service's
+    # accepted requirement fields cannot be introspected. When an operator knows
+    # them, they supply a template here (via CROON_LIVE_CANDIDATES_JSON). Two shapes:
+    #   - dict  -> merged with {"task_prompt", "acceptance_criteria"} at hire time
+    #   - str   -> used verbatim as the requirements string
+    # If omitted, hire_and_pay falls back to a SCHEMA-AGNOSTIC bare JSON string
+    # (no object fields => nothing to reject as an "unsupported requirement field").
+    requirements_template: dict[str, Any] | str | None = None
+
 
 
 
