@@ -108,8 +108,10 @@ HTTP API + Demo UI  (croon/api.py, croon/static/)
         │  (the ONLY door to CAP)
         ▼
    CapClient boundary  (croon/cap_client.py)
-   ├─ MockCapClient   deterministic fake market (no keys/network)
-   └─ LiveCapClient   real croo-sdk → USDC on Base
+   ├─ MockCapClient     deterministic fake market (no keys/network)
+   ├─ LiveCapClient     real croo-sdk → USDC on Base (RPC-verified tx)
+   └─ FailoverCapClient live-first; falls back to mock on failure but
+                        labels the run truthfully (never fakes a live tx)
 ```
 
 - **Layer A — Standing Order Store** (`models.py`): budgets, cadence, run history.
@@ -163,6 +165,35 @@ adapter handles: the `creating → created` order lifecycle (paying too early 40
 `requirements` with no describe endpoint, and **asynchronous delivery** (a paid run
 is valid on its tx hash even if the deliverable arrives later —
 `paid_delivery_pending`).
+
+### Truthful settlement — the honesty guard (anti-"fake demo")
+
+In live mode the app runs on `FailoverCapClient`: every call hits the real SDK
+first and only falls back to `MockCapClient` if the live call raises. That
+resilience must never let a demo *look* live while actually settling on mock. Two
+mechanisms guarantee the UI never presents a fake payment as real:
+
+1. **On-chain verification.** After `pay_order` returns a `tx_hash`,
+   `LiveCapClient._verify_tx_on_chain` independently checks it exists on the
+   configured Base RPC (`eth_getTransactionByHash`). If it can't be found
+   (off-chain id, wrong chain, optimistic ack), the settlement is marked
+   `tx_verified = False`. RPC/network errors are treated as *unverified*, never
+   as a crash.
+2. **Sticky mock-fallback flag.** If the *settlement step itself* fell back to
+   mock, the client sets a sticky `paid_via_mock` flag (reset per run via
+   `begin_run()`), so a later successful live call can't quietly re-label the run.
+
+The engine (`croon/engine.py`) turns these into an honest **three-state `mode`**:
+
+| Condition | `run.mode` | UI shows |
+|-----------|-----------|----------|
+| Settlement fell back to mock (`paid_via_mock`) | `mock` | SIMULATED badge |
+| SDK returned a hash but RPC couldn't confirm it (`tx_verified is False`) | `unverified` | UNVERIFIED — no clickable BaseScan link |
+| Real `pay_order` + tx confirmed on Base RPC | `live` | ● LIVE + clickable BaseScan tx |
+
+This is the direct answer to the hackathon's *"fake demo / broken CAP integration"*
+hard-disqualification: CROON can only ever label a run `live` when a real tx is
+**independently confirmed on-chain**.
 
 ---
 
@@ -269,7 +300,7 @@ python -m scripts.seed
      --requirements '{"market_id":"..."}'
    ```
 
-Inspect on-chain runs:
+Inspect on-chain runs (only RPC-verified live settlements carry `mode='live'`):
 
 ```bash
 sqlite3 croon.db -header -column \
@@ -304,6 +335,9 @@ across a simulated restart) and the provider worker.
 - **Delivery is asynchronous.** A freshly paid run may show
   `paid_delivery_pending`; the deliverable is re-fetchable later. The tx hash is
   the proof of spend.
+- **Failover can degrade to mock.** In live mode a live failure falls back to the
+  mock market — but such a run is labelled `mock`/`unverified` (never `live`), so
+  the safety net can never masquerade as a real settlement.
 - **USDC token:** targets canonical native USDC on Base
   (`0x8335…2913`), not bridged USDbC. Verify before large spends.
 - **Scheduler is demo-grade** — a simple in-process interval loop, not production

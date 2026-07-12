@@ -21,6 +21,7 @@ code 1:1 — file and symbol names below are real.
 | 4 | **One env var flips the whole app** between deterministic mock and real on-chain. | `CROON_CAP_MODE` → `build_cap_client()` |
 | 5 | **Never crash a run; protect the budget.** No bids / over-budget / winner refuses → capability-matched fallback or *zero spend*. | `execute_run` fallback ladder |
 | 6 | **Idempotency is durable, not in-memory.** A WS replay after a restart must never double-pay. | `BrokerageOrder`, `ProviderJob` tables |
+| 7 | **A run is only `live` if its tx is confirmed on-chain.** Resilience must never fake a settlement. | `LiveCapClient._verify_tx_on_chain`, `FailoverCapClient.paid_via_mock` |
 
 ---
 
@@ -54,17 +55,17 @@ direction (top → down). Nothing below reaches back up.
                          ▼
    ┌────────────────────────────────────────────────────────────────────┐
    │  CapClient boundary            croon/cap_client.py                   │
-   │  ┌──────────────────┐        ┌───────────────────────────────────┐  │
-   │  │ MockCapClient    │        │ LiveCapClient  → croo-sdk (PyPI)   │  │
-   │  │ deterministic    │        │ negotiate_order · pay_order ·      │  │
-   │  │ fake market      │        │ list_orders · get_delivery        │  │
-   │  └──────────────────┘        └───────────────┬───────────────────┘  │
-   └──────────────────────────────────────────────┼──────────────────────┘
-                                                   ▼
-                                         ┌───────────────────┐
-                                         │  CROO CAP network  │
-                                         │  USDC on Base      │
-                                         └───────────────────┘
+   │  ┌──────────────┐  ┌────────────────────┐  ┌────────────────────┐   │
+   │  │ MockCapClient│  │ LiveCapClient      │  │ FailoverCapClient  │   │
+   │  │ deterministic│  │ → croo-sdk (PyPI)  │  │ live-first, honest │   │
+   │  │ fake market  │  │ + RPC tx-verify    │  │ mock fallback      │   │
+   │  └──────────────┘  └─────────┬──────────┘  └────────────────────┘   │
+   └────────────────────────────────┼───────────────────────────────────┘
+                                     ▼
+                           ┌───────────────────┐
+                           │  CROO CAP network  │
+                           │  USDC on Base      │
+                           └───────────────────┘
 ```
 
 ### Layer A — Standing Order Store (`croon/models.py`)
@@ -77,8 +78,8 @@ relationships.**
 - `Run` — one full mini-RFQ + settlement cycle. Carries the full `quotes_json`
   (every bidder + score), `winner_agent_id`, `selection_reason`,
   `amount_paid_usdc`, **`tx_hash` (BaseScan-linkable)**, `output_hash`,
-  `receipt_hash`, `fallback_used`, and a **`mode` (`mock|live`)** column so real
-  on-chain runs are never lost among deterministic test rows.
+  `receipt_hash`, `fallback_used`, and a **`mode` (`mock | unverified | live`)**
+  column so only RPC-verified on-chain runs are ever labelled `live`.
 
 Budgets and standing-order state live **here, off-chain** — never in a contract.
 
@@ -116,8 +117,19 @@ Three implementations / one factory:
 - **`MockCapClient`** — a deterministic fake market (5 agents incl. two base
   agents). No network, no keys, no wallet. Per-run jitter is derived from a
   sha256 of `(agent_id + prompt)` so demos look "live" yet reproduce exactly.
-- **`LiveCapClient`** — the real `croo-sdk` adapter (see §5).
-- **`build_cap_client()`** — returns the one implied by `CROON_CAP_MODE`.
+- **`LiveCapClient`** — the real `croo-sdk` adapter (see §7). Every `Settlement`
+  it returns carries a `tx_verified` flag from an independent Base-RPC check
+  (`_verify_tx_on_chain`), so the engine can tell a *confirmed* on-chain payment
+  apart from an SDK ack that never landed.
+- **`FailoverCapClient`** — what `live` mode *actually* runs. It wraps the live
+  client and, on any live failure (startup OR per-call), automatically falls back
+  to `MockCapClient` so a demo never crashes. Crucially it stays **honest**: if
+  the *settlement* step fell back to mock it sets a sticky `paid_via_mock` flag
+  (reset per run via `begin_run()`), so the engine labels the run `mock` — never a
+  fake `live`. See §7.
+- **`build_cap_client()`** — returns the implementation implied by
+  `CROON_CAP_MODE`. `live` → `FailoverCapClient(LiveCapClient, MockCapClient)`;
+  `mock` → `MockCapClient`.
 
 **Quote semantics (spec §4):** CAP has **no native quote primitive**. A quote is
 **derived** from each candidate's listed price/SLA. We deliberately do *not* open
@@ -131,7 +143,7 @@ gas) — only the **winner** is negotiated and paid.
 ```
 execute_run(order)                                            croon/engine.py
 ────────────────────────────────────────────────────────────────────────────
- 0. create Run(status="running", mode=mock|live)   ── persisted immediately
+ 0. cap.begin_run()  (reset failover flags) ── then persist Run(status=running)
  1. BUDGET GUARD  remaining = max_total − spent
         remaining < budget_per_run  →  status=budget_exhausted, STOP
  2. DISCOVER      cap.discover_agents(category, max_agents_to_query)
@@ -141,10 +153,14 @@ execute_run(order)                                            croon/engine.py
  4. SCORE         score_quotes(quotes, budget_per_run)          scoring.py
                   → over-budget quotes EXCLUDED (hard rule)
                   → winner = max weighted score
- 5. HIRE + PAY    cap.hire_and_pay(winner, task, price)  → Settlement(tx_hash)
+ 5. HIRE + PAY    cap.hire_and_pay(winner, task, price)  → Settlement(tx_hash,
+                                                            tx_verified)
  6. DELIVERY      cap.get_delivery(order_id)   (async; graceful if pending)
  7. RECEIPT       sha256(output) + sha256(full receipt bundle)
- 8. PERSIST       Run.status=completed|fallback_used, tx_hash, hashes;
+ 8. LABEL MODE    paid_via_mock          → mode=mock       (SIMULATED)
+                  tx_verified is False    → mode=unverified (no BaseScan link)
+                  real pay + tx confirmed → mode=live       (● LIVE + tx link)
+ 9. PERSIST       Run.status=completed|fallback_used, tx_hash, hashes, mode;
                   order.total_spent += amount;  maybe status=budget_exhausted
 ────────────────────────────────────────────────────────────────────────────
    Every step emits an event to EVENT_BUS → the UI renders it live.
@@ -164,7 +180,8 @@ UI            API            Scheduler        Engine           CapClient        
  │              │               │               │─ score/select ──┐│             │
  │◀─ winner_selected ────────────────────────────│◀────────────────┘│             │
  │              │               │               │─ hire_and_pay ──▶│─ pay_order ─▶│
- │◀─ payment_completed (tx_hash) ────────────────│◀─ Settlement ────│◀─ tx hash ──│
+ │              │               │               │                 │─ verify tx ─▶│
+ │◀─ payment_completed (tx_hash, mode) ──────────│◀─ Settlement ────│◀─ tx hash ──│
  │              │               │               │─ get_delivery ──▶│             │
  │◀─ receipt_generated (receipt_hash) ───────────│─ persist Run ───┐             │
  │◀─ run_completed ──────────────────────────────│◀────────────────┘             │
@@ -226,9 +243,9 @@ supply**, not dead hedges.
 
 ---
 
-## 7. Live CAP integration (`LiveCapClient`)
+## 7. Live CAP integration + the honesty guard (`LiveCapClient` / `FailoverCapClient`)
 
-Mapping of our interface onto the **real** `croo-sdk` (verified by live runs):
+### 7.1 Mapping onto the real `croo-sdk`
 
 | Our method | Real SDK path |
 |-----------|----------------|
@@ -255,6 +272,37 @@ Critical real-world behaviours the adapter handles (all confirmed on-chain):
   deliverable isn't ready yet (status `paid_delivery_pending`).
 - **Precondition:** CROON's AA wallet must hold USDC on Base before `pay_order`,
   or the SDK raises insufficient-balance.
+
+### 7.2 The honesty guard (anti-"fake demo")
+
+Because `live` mode runs on `FailoverCapClient`, a live failure silently falls
+back to the deterministic mock market. That is great for demo resilience and
+**dangerous for integrity** — a demo could *look* live while settling on mock.
+Two independent mechanisms make that impossible:
+
+1. **On-chain verification.** After `pay_order` returns a `tx_hash`,
+   `LiveCapClient._verify_tx_on_chain` calls `eth_getTransactionByHash` on the
+   configured Base RPC. If the hash isn't found (off-chain id, wrong chain,
+   optimistic ack), `Settlement.tx_verified = False`. RPC/network errors are
+   treated as *unverified* (False), never raised — a flaky RPC never crashes a
+   run whose payment may well be valid; the run is simply labelled honestly.
+2. **Sticky mock-fallback flag.** If the **settlement step itself** fell back to
+   mock, `FailoverCapClient` sets a sticky `paid_via_mock = True` (and the
+   broader `any_mock_fallback`). `begin_run()` resets these at the top of every
+   run so one run's fallback can't leak into the next.
+
+The engine (`croon/engine.py`) collapses both signals into a truthful three-state
+`Run.mode`:
+
+| Condition | `run.mode` | UI |
+|-----------|-----------|----|
+| `paid_via_mock` (settlement degraded to mock) | `mock` | SIMULATED badge |
+| `settlement.tx_verified is False` (SDK ack, no on-chain tx) | `unverified` | UNVERIFIED — **no** clickable BaseScan link; emits `settlement_unverified` |
+| real `pay_order` + tx confirmed on Base RPC | `live` | ● LIVE + clickable BaseScan tx |
+
+This is the direct, code-level answer to the hackathon's *fake demo / broken CAP
+integration* hard-disqualification: **CROON can only label a run `live` when a
+real tx is independently confirmed on-chain.**
 
 ---
 
@@ -324,13 +372,16 @@ important is `CROON_CAP_MODE`:
 
 - `mock` → `MockCapClient` — build, test, and demo the **entire** pipeline with
   no network, no keys, no funded wallet.
-- `live` → `LiveCapClient` — real negotiation + USDC settlement on Base.
+- `live` → `FailoverCapClient(LiveCapClient, MockCapClient)` — real negotiation +
+  USDC settlement on Base, with automatic (and *honestly labelled*) mock
+  fallback if the live path fails.
 
 Live-only vars (`CROON_CROO_SDK_KEY`, `CROON_LIVE_CANDIDATES_JSON`,
-`CROON_FALLBACK_*`, `CROON_PROVIDER_*`) also accept the SDK's native names
-(`CROO_SDK_KEY`, `BASE_RPC_URL`, …) so an already-configured CROO wallet works
-without duplicating vars. The `min(buyer_budget, CROON_MAX_CHILD_SPEND_USDC)`
-spend guard means a single paid order can never drain the wallet.
+`CROON_FALLBACK_*`, `CROON_PROVIDER_*`, `CROON_BASE_RPC_URL`) also accept the
+SDK's native names (`CROO_SDK_KEY`, `BASE_RPC_URL`, …) so an already-configured
+CROO wallet works without duplicating vars. The
+`min(buyer_budget, CROON_MAX_CHILD_SPEND_USDC)` spend guard means a single paid
+order can never drain the wallet.
 
 ---
 
@@ -340,13 +391,13 @@ spend guard means a single paid order can never drain the wallet.
 croon/
   api.py            FastAPI transport + UI mount + lifespan (starts B + provider)
   scheduler.py      Layer B — in-process cadence loop + run_now trigger
-  engine.py         Layer C+D — mini-RFQ + settlement + fallback ladder
+  engine.py         Layer C+D — mini-RFQ + settlement + fallback ladder + mode
   scoring.py        transparent weighted scoring + hard budget rule
-  cap_client.py     THE boundary — CapClient / MockCapClient / LiveCapClient
+  cap_client.py     THE boundary — CapClient / Mock / Live / FailoverCapClient
   brokerage.py      main-service brokerage (CROON is hired → re-opens market)
   provider_worker.py supply side — serve base agents as CAP providers
   models.py         Layer A — StandingOrder, Run, BrokerageOrder, ProviderJob
-  schemas.py        SDK-agnostic contract types (Pydantic)
+  schemas.py        SDK-agnostic contract types (Pydantic; incl. tx_verified)
   config.py         env-driven Settings + get_settings()
   events.py         in-memory event bus for the live UI feed
   db.py             SQLModel engine/session/init
