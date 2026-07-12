@@ -311,9 +311,14 @@ class LiveCapClient(CapClient):
     """
 
     # How long to wait for the provider to accept the negotiation before we
-    # give up (engine will then route to fallback). Kept modest for demos.
-    _ACCEPT_TIMEOUT_S = 30
-    _POLL_INTERVAL_S = 1.5
+    # give up (engine will then route to fallback). Matched to the CLI path
+    # (scripts/live_order.py, 60s): external Store providers frequently take
+    # 30-60s to move a negotiation to an on-chain-payable 'created' order, and
+    # a too-short window makes the UI path time out and fall back to a mock
+    # (SIMULATED) settlement even though a real settlement was achievable.
+    _ACCEPT_TIMEOUT_S = 60
+    _POLL_INTERVAL_S = 2.0
+
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
