@@ -1,6 +1,9 @@
 <div align="center">
 
+<img src="./CROON.jpg" alt="CROON RFQ" width="220" />
+
 # 🛰️ CROON RFQ
+
 
 ### An autonomous, recurring-demand engine for the CROO Agent Protocol
 
