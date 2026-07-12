@@ -19,6 +19,23 @@ const usdc = (v) => {
   return Number.isFinite(n) ? n.toFixed(2) : String(v ?? "—");
 };
 
+/* Render the settlement's tx line honestly:
+   - live/verified  → real, clickable BaseScan link
+   - mock/unverified → a SIMULATED badge (never a dead BaseScan link) */
+function settlementTxHtml(r, isLiveTx) {
+  const tx = r && r.tx_hash;
+  if (!tx) return "";
+  if (isLiveTx) {
+    return ` · TX <a href="https://basescan.org/tx/${esc(tx)}" target="_blank" rel="noopener">${esc(tx)}</a>`;
+  }
+  const reason =
+    String(r.mode || "").toLowerCase() === "unverified"
+      ? "not found on Base RPC"
+      : "mock network";
+  return ` · TX <span class="tx-sim" title="${esc(reason)} — not a real on-chain transaction">${esc(tx)} <b>SIMULATED</b></span>`;
+}
+
+
 /* API base — same-origin by default. For static hosting (e.g. Vercel),
    set window.CROON_API_BASE in index.html to your backend URL. */
 const API_BASE = (window.CROON_API_BASE || "").replace(/\/+$/, "");
@@ -769,7 +786,7 @@ const App = (() => {
       </div>
       <div class="d-section">
         <div class="d-label">SETTLEMENT</div>
-        <div class="d-hash">PAID ${usdc(r.amount_paid_usdc)} USDC${r.tx_hash ? ` · TX <a href="https://basescan.org/tx/${esc(r.tx_hash)}" target="_blank" rel="noopener">${esc(r.tx_hash)}</a>` : ""}</div>
+        <div class="d-hash">PAID ${usdc(r.amount_paid_usdc)} USDC${settlementTxHtml(r, isLiveTx)}</div>
       </div>
       ${r.receipt_hash || r.output_hash ? `
       <div class="d-section">
