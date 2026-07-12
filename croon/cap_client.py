@@ -27,6 +27,9 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
+import httpx
+
+
 from croon.config import Settings, get_settings
 from croon.schemas import AgentInfo, Delivery, Quote, Settlement, TaskSpec
 
@@ -429,13 +432,62 @@ class LiveCapClient(CapClient):
             if order_obj is not None:
                 tx_hash = _attr(order_obj, "pay_tx_hash", default=None)
 
+        # INTEGRITY GATE: the SDK reporting a tx_hash is NOT proof of an on-chain
+        # payment. We independently confirm the hash exists on the CONFIGURED
+        # Base RPC via eth_getTransactionByHash. If it is absent (e.g. the SDK
+        # returned an off-chain/optimistic id, or settled on a different chain
+        # than base_rpc_url), we mark the settlement UNVERIFIED so the engine and
+        # UI never present it as a real, BaseScan-linkable live payment.
+        tx_verified = await self._verify_tx_on_chain(tx_hash) if tx_hash else None
+
         return Settlement(
             order_id=str(order_id),
             agent_id=agent.agent_id,
             amount_paid_usdc=agreed_price_usdc,
             tx_hash=tx_hash,
+            tx_verified=tx_verified,
             settled_at=datetime.now(timezone.utc),
         )
+
+    async def _verify_tx_on_chain(self, tx_hash: str) -> bool:
+        """Return True iff `tx_hash` is found on the configured Base RPC.
+
+        Uses a single eth_getTransactionByHash JSON-RPC call. A transaction that
+        is broadcast but not yet mined still returns a non-null result (with a
+        null blockNumber), which is enough to confirm it is a REAL tx that hit
+        the network. A null result means the node has never seen this hash — we
+        must NOT trust it as a live settlement. Network/RPC errors are treated as
+        "unverified" (False) rather than raising, so a flaky RPC never crashes a
+        run whose payment may well be valid — the run is simply labeled honestly.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as http:
+                resp = await http.post(
+                    self.settings.base_rpc_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "eth_getTransactionByHash",
+                        "params": [tx_hash],
+                    },
+                )
+                resp.raise_for_status()
+                result = resp.json().get("result")
+                found = result is not None
+                if not found:
+                    _log.warning(
+                        "tx_hash %s NOT found on Base RPC %s — settlement marked "
+                        "UNVERIFIED (not a confirmable on-chain payment).",
+                        tx_hash, self.settings.base_rpc_url,
+                    )
+                return found
+        except Exception as exc:  # noqa: BLE001 — verification must never crash
+            _log.warning(
+                "on-chain verification of %s failed (%s: %s) — marking "
+                "UNVERIFIED.", tx_hash, type(exc).__name__, exc,
+            )
+            return False
+
 
     async def get_delivery(self, order_id: str) -> Delivery:
         """Fetch the delivered output for a paid order.
@@ -645,6 +697,19 @@ class FailoverCapClient(CapClient):
         self._live = live
         self._mock = mock
         self.degraded = False
+        # STICKY, per-run fallback tracking. `degraded` alone is unsafe: it is
+        # overwritten by EVERY call, so a mock hire_and_pay (fake tx) followed by
+        # a successful live get_delivery would reset it to False and the run
+        # would be mislabeled `mode=live` with a BaseScan-invalid hash. These
+        # flags record whether the CRITICAL settlement step actually failed over
+        # so the engine can label the run truthfully. Reset via begin_run().
+        self.paid_via_mock = False
+        self.any_mock_fallback = False
+
+    def begin_run(self) -> None:
+        """Reset per-run fallback state at the start of a run."""
+        self.paid_via_mock = False
+        self.any_mock_fallback = False
 
     async def _call(self, method: str, *args, **kwargs):
         try:
@@ -653,11 +718,18 @@ class FailoverCapClient(CapClient):
             return result
         except Exception as exc:  # noqa: BLE001 — failover must catch everything
             self.degraded = True
+            self.any_mock_fallback = True
+            if method == "hire_and_pay":
+                # The on-chain settlement itself fell back to mock: the tx_hash
+                # returned is a FAKE, BaseScan-invalid hash. The engine MUST NOT
+                # label such a run as a real live settlement.
+                self.paid_via_mock = True
             _log.warning(
                 "live CAP %s failed (%s: %s) — falling back to mock",
                 method, type(exc).__name__, exc,
             )
             return await getattr(self._mock, method)(*args, **kwargs)
+
 
     async def discover_agents(
         self, category: str | None, limit: int

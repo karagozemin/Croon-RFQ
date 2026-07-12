@@ -76,6 +76,12 @@ class Settlement(BaseModel):
     amount_paid_usdc: Decimal
     tx_hash: str | None = None  # Base tx, BaseScan-linkable
     settled_at: datetime
+    # Whether tx_hash was CONFIRMED to exist on the configured Base RPC via
+    # eth_getTransactionByHash. None = not checked (e.g. mock); True = found
+    # on-chain; False = the SDK returned a hash we could NOT find on-chain (do
+    # NOT present such a run as a verified live settlement).
+    tx_verified: bool | None = None
+
 
 
 class Delivery(BaseModel):

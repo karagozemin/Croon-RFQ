@@ -140,12 +140,17 @@ async def execute_run(
 ) -> Run:
     """Execute ONE full mini-RFQ + settlement cycle for a standing order."""
     settings = get_settings()
+    # Reset per-run failover tracking so a previous run's fallback state can't
+    # leak into this one (see FailoverCapClient.begin_run / paid_via_mock).
+    if hasattr(cap, "begin_run"):
+        cap.begin_run()
     run = Run(
         standing_order_id=order.id,
         status="running",
         started_at=_now(),
         mode="live" if settings.is_live else "mock",
     )
+
 
     session.add(run)
     session.commit()
@@ -356,9 +361,43 @@ async def execute_run(
         )
 
 
+        # --- Truthful labeling (§ integrity) ------------------------------
+        # If the LIVE settlement silently failed over to mock, the tx_hash is a
+        # FAKE, BaseScan-invalid hash. We MUST NOT present such a run as a real
+        # on-chain live payment. Relabel it as a degraded/mock settlement so the
+        # ledger and the UI tell the truth.
+        paid_via_mock = getattr(cap, "paid_via_mock", False)
+        if paid_via_mock:
+            run.mode = "mock"
+            emit(
+                "settlement_degraded",
+                message=(
+                    "Live settlement failed — payment completed on the mock "
+                    "network. tx_hash is NOT a real on-chain transaction."
+                ),
+            )
+        # A SECOND, independent integrity check: the live path may report SUCCESS
+        # (no failover) yet return a tx_hash we could NOT confirm on the Base RPC
+        # (settlement.tx_verified is False). That is exactly the silent failure
+        # paid_via_mock cannot catch — the SDK "succeeded" but nothing is on
+        # chain. Do NOT present it as a verified live payment.
+        elif settlement.tx_verified is False:
+            run.mode = "unverified"
+            emit(
+                "settlement_unverified",
+                message=(
+                    "Payment reported by the SDK but tx_hash was NOT found on "
+                    "the configured Base RPC. Marked UNVERIFIED — not a "
+                    "confirmable on-chain settlement."
+                ),
+                tx_hash=settlement.tx_hash,
+            )
+
+
         # --- Layer D: fetch delivery --------------------------------------
         delivery = await cap.get_delivery(settlement.order_id)
         output_hash = _sha256(delivery.output_text)
+
 
         # --- Layer D: assemble the signed receipt bundle ------------------
         receipt = _build_receipt(
