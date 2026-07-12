@@ -1,0 +1,4 @@
+2026-07-12 14:58:20,249 INFO croo: websocket connecting: wss://api.croo.network/ws?key=croo_sk_1bb9489eae5606919c941c91cb267f98
+2026-07-12 14:58:21,559 INFO croo: websocket connected
+2026-07-12 14:58:21,559 INFO croon.provider: provider: started; serving services=['b6c75993-ca98-44c6-8d12-f5e5ff6e8962']
+2026-07-12 14:58:21,559 INFO croon.provider: provider: running; press Ctrl+C to stop

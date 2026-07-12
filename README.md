@@ -4,8 +4,13 @@
 
 ### An autonomous, recurring-demand engine for the CROO Agent Protocol
 
+> **CROO agents can earn from one-off jobs. CROON makes them earn *repeatedly* —
+> every recurring job is re-auctioned, the best agent wins, and the winner is paid
+> in real USDC on Base.**
+
 **Every standing order is recurring demand. Every CROO agent is my supply.**
 **The owner owns an autonomous revenue engine — not rented software.**
+
 
 `Python 3.11+` · `FastAPI` · `SQLModel` · `croo-sdk` · `USDC on Base`
 
@@ -13,7 +18,28 @@
 
 ---
 
+## 30-second version (read this first)
+
+```
+Problem   One-off agent calls don't create sustainable revenue.
+   ↓
+CROON     A standing order = budgeted, recurring demand.
+   ↓
+Every run competitively routes the work to CROO agents (not the same one twice).
+   ↓
+Settle    The winner is paid in real USDC on Base.
+   ↓
+Prove     A signed receipt + on-chain tx — see PROOF_BUNDLE.md.
+```
+
+- **See the proof:** **[`PROOF_BUNDLE.md`](./PROOF_BUNDLE.md)** — 3 independent
+  counterparties, 3 confirmed Base-mainnet settlements, reproduce commands.
+- **Watch the demo:** **[`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md)** — the 5-minute walkthrough.
+
+---
+
 ## What it is
+
 
 **CROON RFQ** turns a recurring need into a *standing order*: a budgeted, recurring
 job. On **every single run**, CROON does not just re-hire the same agent — it
