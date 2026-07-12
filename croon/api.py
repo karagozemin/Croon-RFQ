@@ -92,6 +92,7 @@ def _run_out(run: Run) -> dict:
         "started_at": run.started_at.isoformat(),
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "status": run.status,
+        "mode": run.mode,
         "quotes": quotes,
         "winner_agent_id": run.winner_agent_id,
         "selection_reason": run.selection_reason,

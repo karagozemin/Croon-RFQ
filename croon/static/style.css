@@ -41,6 +41,11 @@ header {
 .mode-badge.mock { color: var(--warn); border-color: var(--warn); }
 .mode-badge.live { color: var(--accent); border-color: var(--accent); }
 
+/* Per-run mode pills in the run-history table */
+.run-table .mode-badge { border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+.run-table .mode-live { color: var(--accent); border-color: var(--accent); }
+.run-table .mode-mock { color: var(--muted); border-color: var(--border); }
+
 .pitch { margin: 8px 0 0; color: var(--muted); max-width: 900px; }
 .pitch strong { color: var(--accent-2); }
 .pitch em { color: var(--text); font-style: italic; }

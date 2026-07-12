@@ -76,9 +76,13 @@ function renderRuns(runs) {
       ? `<a href="https://basescan.org/tx/${r.tx_hash}" target="_blank" rel="noopener">${short(r.tx_hash)}</a>`
       : "—";
     const fb = r.fallback_used ? ` <span class="tag-fallback">⚠ fallback</span>` : "";
+    const mode = r.mode === "live"
+      ? `<span class="mode-badge mode-live">● LIVE</span>`
+      : `<span class="mode-badge mode-mock">mock</span>`;
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${n}</td>
+      <td>${mode}</td>
       <td>${escapeHtml(r.winner_agent_id || "—")}${fb}</td>
       <td>${r.amount_paid_usdc}</td>
       <td>${r.status}</td>
