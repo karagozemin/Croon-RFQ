@@ -9,7 +9,15 @@ env/
 # Env & secrets
 .env
 *.env
+.env.*
 !.env.example
+# env backups & exported prod values (may contain SDK keys / wallet config)
+.env.bak*
+PROD_ENV_VALUE.txt
+
+# Runtime logs
+.run/
+*.log
 
 # Database
 *.db
