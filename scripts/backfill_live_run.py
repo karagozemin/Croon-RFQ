@@ -4,7 +4,7 @@ Why this exists
 ---------------
 The first genuine live settlement happened on Base (real USDC, real CAP hire),
 but it was executed out-of-band before the persist path was wired. The demand-side
-run-history table therefore still shows 10 mock rows and 0 live rows — so the new
+run-history table therefore still shows 10 mock rows and 0 live rows - so the new
 `mode=live` UI badge has nothing real to display.
 
 This script writes that single real run into the DB so it appears in the API and
@@ -103,7 +103,7 @@ def backfill() -> str:
         if existing is not None:
             return (
                 f"noop: live run already present "
-                f"(run_id={existing.id}, tx={TX_HASH[:10]}…)"
+                f"(run_id={existing.id}, tx={TX_HASH[:10]}...)"
             )
 
         order = _ensure_standing_order(session)
@@ -152,7 +152,7 @@ def backfill() -> str:
         session.refresh(run)
         return (
             f"created: live run_id={run.id} order_id={order.id} "
-            f"amount={AMOUNT_USDC} tx={TX_HASH[:10]}…"
+            f"amount={AMOUNT_USDC} tx={TX_HASH[:10]}..."
         )
 
 

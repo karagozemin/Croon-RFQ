@@ -1,6 +1,6 @@
-"""Scheduler / Trigger — Layer B.
+"""Scheduler / Trigger - Layer B.
 
-A deliberately SIMPLE in-process interval loop (spec §11: do NOT build
+A deliberately SIMPLE in-process interval loop (spec sec.11: do NOT build
 production cron). Every `tick_seconds` it wakes, finds active standing orders
 whose `next_run_at` is due, and fires a run. The demo-critical path is the
 `run_now` trigger (in api.py); this loop just proves cadence works.
@@ -50,7 +50,7 @@ class Scheduler:
         while not self._stop.is_set():
             try:
                 await self._fire_due_orders()
-            except Exception:  # noqa: BLE001 — a bad tick must never kill the loop
+            except Exception:  # noqa: BLE001 - a bad tick must never kill the loop
                 pass
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=tick)

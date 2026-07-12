@@ -1,4 +1,4 @@
-"""Base Gas Oracle Agent — core logic (spec §10.2).
+"""Base Gas Oracle Agent - core logic (spec sec.10.2).
 
 Output: current Base L2 gas price + estimated cost (in ETH and USDC) of a plain
         USDC transfer and a typical CAP call.
@@ -10,11 +10,11 @@ Two modes:
     can itself fail is worthless). Clearly flagged in the output.
 
 Gas-unit assumptions (documented, adjustable):
-  - ERC20 USDC transfer  ≈ 55,000 gas
-  - Typical CAP call/settle ≈ 120,000 gas (approve + transfer + protocol logic)
+  - ERC20 USDC transfer  ~= 55,000 gas
+  - Typical CAP call/settle ~= 120,000 gas (approve + transfer + protocol logic)
 
-Price conversion uses a configurable ETH/USD reference. On Base, USDC ≈ USD, so
-USDC cost ≈ USD cost. This is an ESTIMATE, labelled as such.
+Price conversion uses a configurable ETH/USD reference. On Base, USDC ~= USD, so
+USDC cost ~= USD cost. This is an ESTIMATE, labelled as such.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class GasEstimate:
 
 
 def _cost_usdc(gas_units: int, gas_price_wei: int, eth_usd: Decimal) -> Decimal:
-    """Cost of `gas_units` at `gas_price_wei`, converted to USDC (≈ USD)."""
+    """Cost of `gas_units` at `gas_price_wei`, converted to USDC (~= USD)."""
     eth_cost = (Decimal(gas_units) * Decimal(gas_price_wei)) / _WEI_PER_ETH
     usd = eth_cost * eth_usd
     # Round up to 6 dp (USDC precision) so we never UNDER-quote gas.
@@ -128,7 +128,7 @@ async def estimate_base_gas(
                 return estimate_from_gas_price(
                     gas_price_wei, eth_usd=eth_usd, source="rpc"
                 )
-        except Exception as exc:  # noqa: BLE001 — always deliver
+        except Exception as exc:  # noqa: BLE001 - always deliver
             warnings.append(
                 f"RPC gas lookup failed ({exc.__class__.__name__}); "
                 "using deterministic fallback price."

@@ -1,4 +1,4 @@
-"""Main-service brokerage — fulfil an inbound PAID order for CROON RFQ itself.
+"""Main-service brokerage - fulfil an inbound PAID order for CROON RFQ itself.
 
 When a buyer hires the MAIN CROON RFQ service on the Store (spec: the product is
 sold, not just its base agents), the deliverable is NOT a static report. CROON
@@ -11,7 +11,7 @@ must honour its one-line pitch and RE-OPEN THE MARKET for that buyer:
        tx hash, the child output hash, and a receipt hash over the whole bundle)
 
 This is the supply-side counterpart to the standing-order engine: same CapClient,
-same scoring, same fallback discipline — but driven by an inbound paid order
+same scoring, same fallback discipline - but driven by an inbound paid order
 instead of the scheduler, and it produces a text deliverable (what the buyer
 receives) rather than a persisted Run row.
 
@@ -23,7 +23,7 @@ Two hard safety properties (both tested):
     min(buyer_budget, CROON_MAX_CHILD_SPEND_USDC).
 
   * IDEMPOTENCY (parent order id, DURABLE): paying a child spends real USDC, and
-    a WS reconnect can replay ORDER_PAID — including ACROSS A PROVIDER RESTART.
+    a WS reconnect can replay ORDER_PAID - including ACROSS A PROVIDER RESTART.
     An in-memory cache cannot survive a restart, so idempotency is anchored in
     SQLite via the `BrokerageOrder` table. Each parent order transitions
     claimed -> settled (child paid, tx recorded) -> completed (deliverable
@@ -35,7 +35,7 @@ Two hard safety properties (both tested):
     An in-process per-parent lock additionally serialises concurrent replays
     within a single process.
 
-All CAP interaction still goes exclusively through CapClient (spec §4/§13); this
+All CAP interaction still goes exclusively through CapClient (spec sec.4/sec.13); this
 module orchestrates, it never touches the SDK directly.
 """
 
@@ -59,7 +59,7 @@ from croon.scoring import score_quotes
 
 logger = logging.getLogger("croon.brokerage")
 
-# agent_id of the MAIN service — excluded from its own candidate set so CROON can
+# agent_id of the MAIN service - excluded from its own candidate set so CROON can
 # never hire itself in a loop. Imported lazily (agents.provider pulls in croon.*).
 _MAIN_AGENT_ID = "croon_recurring_rfq"
 
@@ -107,7 +107,7 @@ def _mark_settled(
     """Persist that the child was HIRED + PAID, BEFORE assembling delivery.
 
     This is the crash-safety linchpin: once this commits, a replay can never pay
-    a second child — it recovers via `settled` instead.
+    a second child - it recovers via `settled` instead.
     """
     with Session(_db_engine) as session:
         row = session.get(BrokerageOrder, parent_order_id) or BrokerageOrder(
@@ -193,7 +193,7 @@ async def execute_main_brokerage_order(
                 # WITHOUT paying again.
                 logger.warning(
                     "brokerage: parent order=%s found in 'settled' state "
-                    "(child_order=%s tx=%s) — recovering deliverable without "
+                    "(child_order=%s tx=%s) - recovering deliverable without "
                     "re-payment",
                     parent_order_id,
                     existing.child_order_id,
@@ -234,7 +234,7 @@ async def _recover_settled(
 ) -> str:
     """Rebuild a deliverable for a child that was already paid (crash recovery).
 
-    We do NOT re-run discovery/scoring/payment — the spend already happened and
+    We do NOT re-run discovery/scoring/payment - the spend already happened and
     is proven by `row.child_tx_hash`. We simply re-fetch the child's delivery and
     emit a truthful recovery deliverable anchored to the recorded settlement.
     """
@@ -252,7 +252,7 @@ async def _recover_settled(
     output_hash = engine._sha256(child_output) if child_output else ""
     return "\n".join(
         [
-            "CROON RFQ — brokered fulfilment (recovered after interruption)",
+            "CROON RFQ - brokered fulfilment (recovered after interruption)",
             f"Task: {task_prompt}",
             "",
             "This order's child agent was already hired and PAID before an "
@@ -319,7 +319,7 @@ async def _run_child_cycle(
                     effective_budget=effective_budget,
                     reason=(
                         "no live bids and no capability-appropriate fallback "
-                        f"provider for category '{category}' — no spend"
+                        f"provider for category '{category}' - no spend"
                     ),
                 ),
                 False,
@@ -336,7 +336,7 @@ async def _run_child_cycle(
                     task_prompt=task_prompt,
                     category=category,
                     effective_budget=effective_budget,
-                    reason="capability-matched fallback did not respond — no spend",
+                    reason="capability-matched fallback did not respond - no spend",
                 ),
                 False,
             )
@@ -361,7 +361,7 @@ async def _run_child_cycle(
                 effective_budget=effective_budget,
                 reason=(
                     "no eligible quote under the capped child budget "
-                    f"({effective_budget} USDC) — no spend"
+                    f"({effective_budget} USDC) - no spend"
                 ),
             ),
             False,
@@ -418,7 +418,7 @@ async def _run_child_cycle(
 def _render_deliverable(receipt: dict, child_output: str) -> str:
     """Human-readable proof bundle + machine-readable receipt JSON."""
     lines = [
-        "CROON RFQ — brokered fulfilment (market re-opened for this order)",
+        "CROON RFQ - brokered fulfilment (market re-opened for this order)",
         f"Task: {receipt['task_prompt']}",
         f"Category: {receipt['category'] or 'any'}",
         (
@@ -474,12 +474,12 @@ def _no_provider_deliverable(
     """Deliverable when the market yields no eligible provider (NO spend)."""
     return "\n".join(
         [
-            "CROON RFQ — brokered fulfilment (market re-opened for this order)",
+            "CROON RFQ - brokered fulfilment (market re-opened for this order)",
             f"Task: {task_prompt}",
             f"Category: {category or 'any'}",
             f"Child budget: {effective_budget} USDC",
             "",
-            "No child settlement performed — budget protected.",
+            "No child settlement performed - budget protected.",
             f"Reason: {reason}",
         ]
     )

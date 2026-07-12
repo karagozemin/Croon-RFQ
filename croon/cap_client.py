@@ -1,4 +1,4 @@
-"""CapClient — the ONE isolation boundary for all CAP interactions.
+"""CapClient - the ONE isolation boundary for all CAP interactions.
 
 ALL uncertainty about the real CROO CAP SDK lives HERE and nowhere else.
 The engine depends only on this abstract interface + the schemas.
@@ -6,11 +6,11 @@ The engine depends only on this abstract interface + the schemas.
 - `CapClient`     : abstract interface (contract the engine relies on).
 - `MockCapClient` : deterministic fake agents; lets us build/test the entire
                     pipeline with NO network, NO keys, NO funded wallet.
-- `LiveCapClient` : real SDK adapter. STUBBED for now — wired in build step 4
+- `LiveCapClient` : real SDK adapter. STUBBED for now - wired in build step 4
                     AFTER confirming real method names/signatures from the
                     official CROO CAP SDK docs. Do NOT invent methods.
 
-Quote semantics note (spec §4): CAP may have no native "quote" primitive.
+Quote semantics note (spec sec.4): CAP may have no native "quote" primitive.
 In that case a quote is DERIVED from the agent's listed price / SLA (+ any
 negotiation signal). MockCapClient models exactly that shape so the scoring
 engine is meaningful either way.
@@ -71,7 +71,7 @@ class CapClient(abc.ABC):
 
 
 # =============================================================================
-# MockCapClient — deterministic fake market (no network required)
+# MockCapClient - deterministic fake market (no network required)
 # =============================================================================
 
 # A small, believable roster. Prices/ETAs/reputation are static so demos are
@@ -104,7 +104,7 @@ _MOCK_ROSTER: list[dict] = [
         "base_eta": 60,
         "is_base_agent": False,
     },
-    # OUR base agents — real, hireable fallback providers (§7, §10). Modeled here
+    # OUR base agents - real, hireable fallback providers (sec.7, sec.10). Modeled here
     # so the mock pipeline exercises the fallback path too.
     {
         "agent_id": "base_listing_copy",
@@ -132,7 +132,7 @@ class MockCapClient(CapClient):
 
     Optional failure injection (for demoing the fallback path):
       - `fail_non_base_quotes=True` makes all non-base agents time out, forcing
-        the engine down the fallback route (§7).
+        the engine down the fallback route (sec.7).
     """
 
     def __init__(
@@ -230,7 +230,7 @@ class MockCapClient(CapClient):
 
         # If one of OUR base agents was hired (typically the fallback path),
         # produce its REAL work product by running the actual agent core. This
-        # is what makes the base agents genuine supply, not dead hedges (§7/§10).
+        # is what makes the base agents genuine supply, not dead hedges (sec.7/sec.10).
         if agent_id is not None:
             from agents.provider import BASE_AGENTS
 
@@ -273,7 +273,7 @@ class MockCapClient(CapClient):
 
 
 # =============================================================================
-# LiveCapClient — real SDK adapter (STUBBED until build step 4)
+# LiveCapClient - real SDK adapter (STUBBED until build step 4)
 # =============================================================================
 
 
@@ -287,10 +287,10 @@ class LiveCapClient(CapClient):
                           (account & service setup live in the Agent Store). So
                           candidates come from a CONFIGURED roster of Store
                           service ids (CROON_LIVE_CANDIDATES_JSON). Honest and
-                          documented (README §CAP mapping).
+                          documented (README sec.CAP mapping).
 
       request_quote    -> CAP has NO native quote primitive. We DERIVE a quote
-                          from the candidate's listed price / SLA (spec §4).
+                          from the candidate's listed price / SLA (spec sec.4).
                           We deliberately do NOT open a negotiation just to
                           quote (that would create dangling on-chain state and
                           cost gas). The real negotiation happens in
@@ -305,7 +305,7 @@ class LiveCapClient(CapClient):
 
     PRECONDITION: CROON's AA wallet must be funded with USDC on Base before
     pay_order, otherwise the SDK raises an insufficient-balance error
-    (is_insufficient_balance). See README §Wallet funding.
+    (is_insufficient_balance). See README sec.Wallet funding.
 
     Auth: AgentClient(config, "croo_sk_...") via X-SDK-Key header.
     """
@@ -344,7 +344,7 @@ class LiveCapClient(CapClient):
     async def discover_agents(
         self, category: str | None, limit: int
     ) -> list[AgentInfo]:
-        # SDK has no discovery — build candidates from the configured roster.
+        # SDK has no discovery - build candidates from the configured roster.
         agents: list[AgentInfo] = []
         for r in self.settings.live_candidates:
             price = r.get("listed_price_usdc")
@@ -372,8 +372,8 @@ class LiveCapClient(CapClient):
     async def request_quote(
         self, agent: AgentInfo, task: TaskSpec, timeout_s: int
     ) -> Quote | None:
-        # DERIVED quote (spec §4): use the candidate's listed price/SLA as its
-        # bid. No on-chain action here — quoting must be cheap and side-effect
+        # DERIVED quote (spec sec.4): use the candidate's listed price/SLA as its
+        # bid. No on-chain action here - quoting must be cheap and side-effect
         # free; only the winner is actually negotiated + paid.
         if agent.listed_price_usdc is None:
             return None
@@ -398,7 +398,7 @@ class LiveCapClient(CapClient):
         # Verified against croo-sdk: negotiate_order takes a typed
         # NegotiateOrderRequest (NOT a dict). Fields confirmed by introspection:
         #   service_id, requirements, metadata, requester_agent_id,
-        #   fund_amount, fund_token.  There is NO `price` field — the price comes
+        #   fund_amount, fund_token.  There is NO `price` field - the price comes
         #   from the provider's listed service; `agreed_price_usdc` is enforced
         #   OFF-CHAIN by our budget rule (we only negotiate the winner, whose
         #   listed price already passed the budget gate in scoring).
@@ -460,10 +460,10 @@ class LiveCapClient(CapClient):
         Uses a single eth_getTransactionByHash JSON-RPC call. A transaction that
         is broadcast but not yet mined still returns a non-null result (with a
         null blockNumber), which is enough to confirm it is a REAL tx that hit
-        the network. A null result means the node has never seen this hash — we
+        the network. A null result means the node has never seen this hash - we
         must NOT trust it as a live settlement. Network/RPC errors are treated as
         "unverified" (False) rather than raising, so a flaky RPC never crashes a
-        run whose payment may well be valid — the run is simply labeled honestly.
+        run whose payment may well be valid - the run is simply labeled honestly.
         """
         try:
             async with httpx.AsyncClient(timeout=8.0) as http:
@@ -481,14 +481,14 @@ class LiveCapClient(CapClient):
                 found = result is not None
                 if not found:
                     _log.warning(
-                        "tx_hash %s NOT found on Base RPC %s — settlement marked "
+                        "tx_hash %s NOT found on Base RPC %s - settlement marked "
                         "UNVERIFIED (not a confirmable on-chain payment).",
                         tx_hash, self.settings.base_rpc_url,
                     )
                 return found
-        except Exception as exc:  # noqa: BLE001 — verification must never crash
+        except Exception as exc:  # noqa: BLE001 - verification must never crash
             _log.warning(
-                "on-chain verification of %s failed (%s: %s) — marking "
+                "on-chain verification of %s failed (%s: %s) - marking "
                 "UNVERIFIED.", tx_hash, type(exc).__name__, exc,
             )
             return False
@@ -502,8 +502,8 @@ class LiveCapClient(CapClient):
         get_delivery() call right after payment routinely 404s
         (DELIVERY_NOT_FOUND) until the provider fulfils. We poll briefly, then
         degrade GRACEFULLY: a not-yet-ready delivery must NOT crash a run whose
-        payment already succeeded on-chain. The run is still valid — the tx hash
-        is the proof of spend — and the buyer can re-fetch the delivery later.
+        payment already succeeded on-chain. The run is still valid - the tx hash
+        is the proof of spend - and the buyer can re-fetch the delivery later.
         """
         deadline = asyncio.get_event_loop().time() + DELIVERY_POLL_TIMEOUT_S
         last_exc: Exception | None = None
@@ -520,7 +520,7 @@ class LiveCapClient(CapClient):
                         output_text=str(text),
                         delivered_at=datetime.now(timezone.utc),
                     )
-                # Delivery row exists but is empty/pending — keep polling.
+                # Delivery row exists but is empty/pending - keep polling.
             except Exception as exc:  # noqa: BLE001 - 404 while provider works
                 last_exc = exc
             if asyncio.get_event_loop().time() >= deadline:
@@ -598,7 +598,7 @@ class LiveCapClient(CapClient):
         called during "creating", so we MUST poll past it.
 
         `Negotiation` has NO order_id field, so we resolve the Order via
-        list_orders() by matching negotiation_id. Times out -> fallback (§7).
+        list_orders() by matching negotiation_id. Times out -> fallback (sec.7).
         """
         from croo import ListOptions  # type: ignore
 
@@ -666,7 +666,7 @@ def _attr(obj: object, *names: str, default: object = "__RAISE__") -> object:
 
     The SDK returns typed objects, but exact field names may vary slightly by
     version. This keeps the adapter resilient and confines that uncertainty to
-    ONE place (per spec §4)."""
+    ONE place (per spec sec.4)."""
     for n in names:
         if isinstance(obj, dict) and n in obj:
             return obj[n]
@@ -681,7 +681,7 @@ def _attr(obj: object, *names: str, default: object = "__RAISE__") -> object:
 
 
 # =============================================================================
-# FailoverCapClient — live first, automatic mock fallback (demo resilience)
+# FailoverCapClient - live first, automatic mock fallback (demo resilience)
 # =============================================================================
 
 
@@ -693,7 +693,7 @@ class FailoverCapClient(CapClient):
     insufficient balance, SDK drift...), the same call is transparently
     retried against MockCapClient so a demo/run never hard-fails.
 
-    `degraded` reflects whether the MOST RECENT live call failed over — the
+    `degraded` reflects whether the MOST RECENT live call failed over - the
     /health endpoint surfaces it so you can see at a glance that the app is
     running on mock data.
     """
@@ -721,7 +721,7 @@ class FailoverCapClient(CapClient):
             result = await getattr(self._live, method)(*args, **kwargs)
             self.degraded = False
             return result
-        except Exception as exc:  # noqa: BLE001 — failover must catch everything
+        except Exception as exc:  # noqa: BLE001 - failover must catch everything
             self.degraded = True
             self.any_mock_fallback = True
             if method == "hire_and_pay":
@@ -730,7 +730,7 @@ class FailoverCapClient(CapClient):
                 # label such a run as a real live settlement.
                 self.paid_via_mock = True
             _log.warning(
-                "live CAP %s failed (%s: %s) — falling back to mock",
+                "live CAP %s failed (%s: %s) - falling back to mock",
                 method, type(exc).__name__, exc,
             )
             return await getattr(self._mock, method)(*args, **kwargs)
@@ -756,7 +756,7 @@ class FailoverCapClient(CapClient):
 
 
 # =============================================================================
-# Factory — flip the whole app with ONE env var (CROON_CAP_MODE)
+# Factory - flip the whole app with ONE env var (CROON_CAP_MODE)
 # =============================================================================
 
 
@@ -772,7 +772,7 @@ def build_cap_client(settings: Settings | None = None) -> CapClient:
             live = LiveCapClient(settings)
         except Exception as exc:  # missing key / SDK not installed / etc.
             _log.warning(
-                "live CAP unavailable at startup (%s: %s) — running on MOCK",
+                "live CAP unavailable at startup (%s: %s) - running on MOCK",
                 type(exc).__name__, exc,
             )
             return MockCapClient()

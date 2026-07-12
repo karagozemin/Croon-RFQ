@@ -1,4 +1,4 @@
-"""SQLModel tables — Layer A (Standing Order Store).
+"""SQLModel tables - Layer A (Standing Order Store).
 
 This is our "this is NOT a cron job" proof: stateful, budgeted, historical
 commercial relationships. Standing-order state + budgets live HERE (off-chain),
@@ -58,7 +58,7 @@ class StandingOrder(SQLModel, table=True):
 
 
 class Run(SQLModel, table=True):
-    """One execution of a standing order — a full mini-RFQ + settlement cycle."""
+    """One execution of a standing order - a full mini-RFQ + settlement cycle."""
 
     id: str = Field(default_factory=_uuid, primary_key=True)
     standing_order_id: str = Field(foreign_key="standingorder.id", index=True)
@@ -93,7 +93,7 @@ class BrokerageOrder(SQLModel, table=True):
     """Durable idempotency record for a MAIN-service brokered order.
 
     When a buyer hires the MAIN CROON RFQ service, CROON re-opens the market and
-    HIRES + PAYS a downstream (child) agent — real USDC on Base. The CAP
+    HIRES + PAYS a downstream (child) agent - real USDC on Base. The CAP
     WebSocket can replay ``ORDER_PAID`` on reconnect AND across a provider
     process RESTART, so an in-memory cache is NOT sufficient: a replay after a
     restart would pay a second child and drain the wallet.
@@ -131,7 +131,7 @@ class BrokerageOrder(SQLModel, table=True):
 
 
 class ProviderJob(SQLModel, table=True):
-    """One incoming order served by OUR base agents as a CAP PROVIDER (§7/§10).
+    """One incoming order served by OUR base agents as a CAP PROVIDER (sec.7/sec.10).
 
     This is the SUPPLY-side ledger, distinct from Run (the demand side). Its
     real job is IDEMPOTENCY: the CAP WebSocket may replay `order_negotiation_
@@ -142,7 +142,7 @@ class ProviderJob(SQLModel, table=True):
 
     id: str = Field(default_factory=_uuid, primary_key=True)
 
-    # Idempotency key — the CAP negotiation this job is fulfilling.
+    # Idempotency key - the CAP negotiation this job is fulfilling.
     negotiation_id: str = Field(unique=True, index=True)
     service_id: str = Field(index=True)
     agent_id: str = ""  # OUR base-agent id handling it (e.g. base_gas_oracle)

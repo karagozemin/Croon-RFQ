@@ -56,7 +56,7 @@ async def _try_call(client: object, method_name: str, agent_id: str):
         if inspect.isawaitable(result):
             result = await result
         return result
-    except Exception as exc:  # noqa: BLE001 — probe, never fatal
+    except Exception as exc:  # noqa: BLE001 - probe, never fatal
         return f"(call failed: {type(exc).__name__}: {exc})"
 
 
@@ -94,7 +94,7 @@ async def main() -> int:
 
     settings = get_settings()
     if not settings.croo_sdk_key:
-        print("❌ CROON_CROO_SDK_KEY not set — cannot query live API.")
+        print("[X] CROON_CROO_SDK_KEY not set - cannot query live API.")
         return 1
 
     from croo import AgentClient, Config  # type: ignore
@@ -126,8 +126,8 @@ async def main() -> int:
         and any(m.startswith(p) for p in ("get", "list", "fetch", "find"))
     ]
     if not preferred:
-        print("⚠️  No agent/service getter found in this SDK version.")
-        print("   Full method list above — tell me which one to use.")
+        print("[!]  No agent/service getter found in this SDK version.")
+        print("   Full method list above - tell me which one to use.")
         try:
             await client.close()
         except Exception:
@@ -135,7 +135,7 @@ async def main() -> int:
         return 0
 
     for m in preferred:
-        print(f"── Trying {m}({agent_id!r}) ──")
+        print(f"-- Trying {m}({agent_id!r}) --")
         result = await _try_call(client, m, agent_id)
         _dump(result)
         print()

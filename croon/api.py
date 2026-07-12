@@ -1,7 +1,7 @@
-"""FastAPI app — HTTP API (spec §8) + serves the demo UI (spec §9).
+"""FastAPI app - HTTP API (spec sec.8) + serves the demo UI (spec sec.9).
 
 Wires everything together:
-  - builds the CapClient from CROON_CAP_MODE (mock|live) — the demo safety net
+  - builds the CapClient from CROON_CAP_MODE (mock|live) - the demo safety net
   - starts the in-process Scheduler (Layer B) on startup
   - exposes standing-order CRUD, run-now, pause, run detail, and a live event
     stream for the mini-RFQ money shot
@@ -41,9 +41,9 @@ async def lifespan(app: FastAPI):
     cap = build_cap_client()
     scheduler = Scheduler(cap)
     scheduler.start()
-    # Supply side (spec §10): serve our base agents as live CAP providers so
+    # Supply side (spec sec.10): serve our base agents as live CAP providers so
     # they can be hired (incl. as CROON's own fallback). Safe no-op in mock mode
-    # or when disabled/unconfigured — see ProviderWorker.start().
+    # or when disabled/unconfigured - see ProviderWorker.start().
     provider = ProviderWorker()
     await provider.start()
     app.state.cap = cap
@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CROON RFQ", version="0.1.0", lifespan=lifespan)
 
-# CORS — allows the frontend to be hosted separately (e.g. Vercel) while the
+# CORS - allows the frontend to be hosted separately (e.g. Vercel) while the
 # API runs elsewhere. Same-origin serving continues to work unchanged.
 app.add_middleware(
     CORSMiddleware,
@@ -116,7 +116,7 @@ def _run_out(run: Run) -> dict:
     }
 
 
-# --- Standing-order endpoints (spec §8) -------------------------------------
+# --- Standing-order endpoints (spec sec.8) -------------------------------------
 
 
 @app.post("/standing-orders")
@@ -163,7 +163,7 @@ def get_standing_order(
 
 @app.post("/standing-orders/{order_id}/run-now")
 async def run_now(order_id: str) -> dict:
-    """DEMO CRITICAL — trigger a full mini-RFQ + settlement cycle immediately."""
+    """DEMO CRITICAL - trigger a full mini-RFQ + settlement cycle immediately."""
     with Session(engine) as session:
         order = session.get(StandingOrder, order_id)
         if order is None:

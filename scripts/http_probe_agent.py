@@ -2,7 +2,7 @@
 
 The installed `croo` SDK exposes NO agent/service getter (only order/negotiation/
 delivery reads), so we probe the REST API directly with GET requests. This is
-strictly read-only — no negotiation, no payment, no mutation. Auth via the same
+strictly read-only - no negotiation, no payment, no mutation. Auth via the same
 X-SDK-Key header the SDK uses.
 
 We try a handful of plausible, conventional REST paths and print status + body
@@ -49,7 +49,7 @@ async def main() -> int:
 
     settings = get_settings()
     if not settings.croo_sdk_key:
-        print("❌ CROON_CROO_SDK_KEY not set — cannot query live API.")
+        print("[X] CROON_CROO_SDK_KEY not set - cannot query live API.")
         return 1
 
     base = settings.croo_api_url.rstrip("/")
@@ -60,7 +60,7 @@ async def main() -> int:
 
     print(f"Read-only HTTP probe against {base}")
     print(f"  agent_id = {agent_id}")
-    print(f"  auth     = X-SDK-Key {settings.croo_sdk_key[:12]}…\n")
+    print(f"  auth     = X-SDK-Key {settings.croo_sdk_key[:12]}...\n")
 
     found_service_ids: set[str] = set()
 
@@ -70,13 +70,13 @@ async def main() -> int:
             try:
                 resp = await client.get(path)
             except Exception as exc:  # noqa: BLE001
-                print(f"GET {path:40s} → ERROR {type(exc).__name__}: {exc}")
+                print(f"GET {path:40s} -> ERROR {type(exc).__name__}: {exc}")
                 continue
 
             status = resp.status_code
             body_preview = resp.text[:400].replace("\n", " ")
-            marker = "✅" if status == 200 else ("·" if status in (401, 403) else " ")
-            print(f"{marker} GET {path:40s} → {status}  {body_preview}")
+            marker = "[OK]" if status == 200 else ("." if status in (401, 403) else " ")
+            print(f"{marker} GET {path:40s} -> {status}  {body_preview}")
 
             if status == 200:
                 # Try to surface any service_id in the JSON.
@@ -89,7 +89,7 @@ async def main() -> int:
 
     print()
     if found_service_ids:
-        print("🎯 service_id(s) discovered:")
+        print("[target] service_id(s) discovered:")
         for sid in sorted(found_service_ids):
             print(f"   {sid}")
     else:

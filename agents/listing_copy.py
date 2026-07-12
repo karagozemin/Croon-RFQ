@@ -1,7 +1,7 @@
-"""Listing Copy Agent — pure logic core (spec §10.1).
+"""Listing Copy Agent - pure logic core (spec sec.10.1).
 
 Input : a repo URL and/or a free-text project description.
-Output: Agent Store listing copy — a tagline, exactly 3 selling bullets, and a
+Output: Agent Store listing copy - a tagline, exactly 3 selling bullets, and a
         suggested category.
 
 Deterministic and dependency-free so it is unit-testable and cheap to run as a
@@ -50,7 +50,7 @@ class ListingCopyResult:
             f"CATEGORY: {self.suggested_category}",
             "BULLETS:",
         ]
-        lines += [f"  • {b}" for b in self.bullets]
+        lines += [f"  * {b}" for b in self.bullets]
         return "\n".join(lines)
 
 
@@ -110,13 +110,13 @@ def generate_listing_copy(
     keywords = _keywords(description or repo_url or "")
 
     focus = keywords[0] if keywords else category
-    tagline = f"{name} — autonomous {focus} for the CROO agent economy."
+    tagline = f"{name} - autonomous {focus} for the CROO agent economy."
 
     bullets = [
         f"Purpose-built for {category}: {name} turns recurring demand into "
         "on-chain revenue.",
         (
-            "CAP-native: discoverable, hireable, and paid in USDC on Base — "
+            "CAP-native: discoverable, hireable, and paid in USDC on Base - "
             "no integrations, no invoices."
         ),
         (

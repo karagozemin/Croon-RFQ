@@ -34,7 +34,7 @@ async def main(order_id: str) -> None:
     status = _attr(delivery, "status", default=None)
     print(f"[REPOLL] status={status}")
     if text:
-        print("[REPOLL] DELIVERED — full-cycle proof (negotiate -> pay -> deliver):")
+        print("[REPOLL] DELIVERED - full-cycle proof (negotiate -> pay -> deliver):")
         print("-" * 60)
         print(text)
         print("-" * 60)

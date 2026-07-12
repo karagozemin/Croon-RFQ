@@ -3,13 +3,13 @@
 Why this exists
 ---------------
 In live mode the mini-RFQ engine builds its candidate set from
-CROON_LIVE_CANDIDATES_JSON (the SDK has NO discovery primitive — confirmed
+CROON_LIVE_CANDIDATES_JSON (the SDK has NO discovery primitive - confirmed
 against the live API). CROON will REALLY hire + pay the winner, so a bad roster
 is expensive:
 
   * a candidate priced ABOVE budget_per_run is silently EXCLUDED by scoring
-    (croon/scoring.py) → wasted slot, and if ALL are excluded the run falls to
-    the fallback provider every time (no A2A diversity → lost hackathon points);
+    (croon/scoring.py) -> wasted slot, and if ALL are excluded the run falls to
+    the fallback provider every time (no A2A diversity -> lost hackathon points);
   * a candidate from the WRONG bucket (different input/output shape) makes
     scoring meaningless and risks paying for garbage output;
   * a missing service_id means hire_and_pay CANNOT negotiate it at all.
@@ -46,11 +46,11 @@ try:
     # Our OWN provider identities. Any candidate colliding with these is a
     # self-trade (CROON hiring itself) and triggers the anti-sybil flags
     # (<3 unique counterparties + concentrated self-trade). Base agents are
-    # FALLBACK ONLY — never legitimate competitive candidates.
+    # FALLBACK ONLY - never legitimate competitive candidates.
     from agents.provider import ALL_AGENTS
 
     _OWN_AGENT_IDS = set(ALL_AGENTS)
-except Exception:  # noqa: BLE001 — agents pkg optional at validation time
+except Exception:  # noqa: BLE001 - agents pkg optional at validation time
     _OWN_AGENT_IDS = {"croon_recurring_rfq", "base_listing_copy", "base_gas_oracle"}
 
 REQUIRED = ("agent_id", "name", "service_id")
@@ -91,11 +91,11 @@ def main() -> int:
     try:
         roster = _load_roster(args)
     except json.JSONDecodeError as exc:
-        print(f"❌ Roster is not valid JSON: {exc}")
+        print(f"[X] Roster is not valid JSON: {exc}")
         return 1
 
     if not isinstance(roster, list) or not roster:
-        print("❌ Roster is empty. Set CROON_LIVE_CANDIDATES_JSON or pass --json/--file.")
+        print("[X] Roster is empty. Set CROON_LIVE_CANDIDATES_JSON or pass --json/--file.")
         print("   Need 3-4 CHEAP, same-bucket, LIVE providers for A2A diversity.")
         return 1
 
@@ -130,27 +130,27 @@ def main() -> int:
         # Anti-self-trade guard -------------------------------------------
         # Candidates must be EXTERNAL third parties. Our own agents (main +
         # base/fallback) hiring themselves = concentrated self-trade + fewer
-        # unique counterparties → anti-sybil flags. Base agents stay fallback
+        # unique counterparties -> anti-sybil flags. Base agents stay fallback
         # ONLY; they must never appear in the competitive candidate pool.
         if aid and aid in _OWN_AGENT_IDS:
             errors.append(
-                f"[{tag}] agent_id '{aid}' is one of OUR OWN agents — self-trade. "
+                f"[{tag}] agent_id '{aid}' is one of OUR OWN agents - self-trade. "
                 "Base agents are fallback-only, never RFQ candidates."
             )
         if sid and sid in own_service_ids:
             errors.append(
-                f"[{tag}] service_id '{sid}' is one of OUR OWN provider services — "
+                f"[{tag}] service_id '{sid}' is one of OUR OWN provider services - "
                 "self-trade. Use an EXTERNAL third-party agent."
             )
 
         # Duplicate guard: repeated ids fake diversity but are one counterparty.
         if aid:
             if aid in seen_agent_ids:
-                errors.append(f"[{tag}] duplicate agent_id '{aid}' — not a distinct counterparty")
+                errors.append(f"[{tag}] duplicate agent_id '{aid}' - not a distinct counterparty")
             seen_agent_ids.add(aid)
         if sid:
             if sid in seen_service_ids:
-                errors.append(f"[{tag}] duplicate service_id '{sid}' — not a distinct counterparty")
+                errors.append(f"[{tag}] duplicate service_id '{sid}' - not a distinct counterparty")
             seen_service_ids.add(sid)
 
 
@@ -163,13 +163,13 @@ def main() -> int:
         if price is not None:
             if price >= CHEAP_CEILING:
                 warnings.append(
-                    f"[{tag}] price {price} USDC ≥ {CHEAP_CEILING} — consider a cheaper "
+                    f"[{tag}] price {price} USDC >= {CHEAP_CEILING} - consider a cheaper "
                     "provider to protect the wallet"
                 )
             if budget is not None:
                 if price > budget:
                     errors.append(
-                        f"[{tag}] price {price} > budget {budget} — this candidate is "
+                        f"[{tag}] price {price} > budget {budget} - this candidate is "
                         "EXCLUDED by scoring and just wastes an RFQ slot"
                     )
                 else:
@@ -182,33 +182,33 @@ def main() -> int:
     # Cross-candidate sanity ----------------------------------------------
     if len(categories) > 1:
         warnings.append(
-            f"Mixed categories {sorted(categories)} — candidates should share ONE "
+            f"Mixed categories {sorted(categories)} - candidates should share ONE "
             "task bucket (same input/output shape) or scoring is meaningless"
         )
     if len(roster) < 3:
         warnings.append(
-            f"Only {len(roster)} candidate(s) — 3-4 recommended for visible A2A "
+            f"Only {len(roster)} candidate(s) - 3-4 recommended for visible A2A "
             "diversity ('different winner each run')"
         )
     if budget is not None and under_budget < 2:
         errors.append(
-            f"Only {under_budget} candidate(s) under budget — the RFQ needs ≥2 real "
+            f"Only {under_budget} candidate(s) under budget - the RFQ needs >=2 real "
             "bidders or it collapses to the fallback provider every run"
         )
 
     # Report ---------------------------------------------------------------
     for w in warnings:
-        print(f"⚠️  {w}")
+        print(f"[!]  {w}")
     for e in errors:
-        print(f"❌ {e}")
+        print(f"[X] {e}")
 
     print()
     if errors:
-        print(f"RESULT: ❌ NOT safe to run live ({len(errors)} error(s), "
+        print(f"RESULT: [X] NOT safe to run live ({len(errors)} error(s), "
               f"{len(warnings)} warning(s)). Fix errors above.")
         return 1
 
-    print(f"RESULT: ✅ Roster looks safe to run live "
+    print(f"RESULT: [OK] Roster looks safe to run live "
           f"({len(warnings)} warning(s), {len(roster)} candidates, "
           f"{len(categories) or 'n/a'} category).")
     return 0

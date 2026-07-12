@@ -1,11 +1,11 @@
-"""Live CAP provider worker for CROON's base agents (spec §10, supply side).
+"""Live CAP provider worker for CROON's base agents (spec sec.10, supply side).
 
 This is the SUPPLY counterpart to CapClient. Where CapClient is the BUYER
 (negotiate -> pay -> collect delivery), this worker is the SELLER: it owns one
 or more Store services, and for each incoming order it accepts the negotiation,
 runs the deterministic core, and delivers the result on-chain.
 
-SDK primitives used (ALL confirmed against the installed `croo` package —
+SDK primitives used (ALL confirmed against the installed `croo` package -
 see croo/agent_client.py, croo/ws.py, croo/types.py):
   - AgentClient(config, sdk_key)                       (agent_client.py)
   - client.connect_websocket() -> EventStream          (agent_client.py / ws.py)
@@ -23,14 +23,14 @@ see croo/agent_client.py, croo/ws.py, croo/types.py):
 
 CONFIRMED SDK FACTS that shaped this file:
   * WS callbacks are SYNCHRONOUS: ws.py `_dispatch_message` calls `h(event)`
-    directly. Async SDK work must be dispatched via `asyncio.create_task` — we
+    directly. Async SDK work must be dispatched via `asyncio.create_task` - we
     do this through `_spawn` using the loop captured at start().
   * `Event` (types.py) carries typed ids: negotiation_id, order_id, service_id,
     requester_agent_id, provider_agent_id, status, reason, plus the raw payload
     dict. We read typed fields first and fall back to `raw` defensively.
   * `Order` (types.py) has NO `requirements` field. The buyer's task/prompt is
     on `Negotiation.requirements`. So on ORDER_PAID we resolve the prompt via
-    get_negotiation(order.negotiation_id) — NOT off the order.
+    get_negotiation(order.negotiation_id) - NOT off the order.
 
 Lifecycle we implement:
   NEGOTIATION_CREATED (service we own) -> get_negotiation -> validate ->
@@ -79,7 +79,7 @@ class ProviderWorker:
     """Runs owned base-agent services against the live CAP WebSocket.
 
     One worker instance serves ALL owned services (mapped by service_id) over a
-    single SDK-Key WebSocket connection — the SDK rejects duplicate-key
+    single SDK-Key WebSocket connection - the SDK rejects duplicate-key
     connections (ws.py `_POLICY_VIOLATION`), so we must multiplex, not open one
     socket per agent.
     """
@@ -118,7 +118,7 @@ class ProviderWorker:
 
     @property
     def served_kinds(self) -> dict[str, str]:
-        """{service_id: kind} — 'main' (CROON RFQ brokerage) vs 'base' (fallback).
+        """{service_id: kind} - 'main' (CROON RFQ brokerage) vs 'base' (fallback).
 
         Lets /health and readiness show, at a glance, whether the product itself
         is being served or only its base agents.
@@ -143,7 +143,7 @@ class ProviderWorker:
 
         Resolves against ALL_AGENTS (the main CROON RFQ brokerage service PLUS
         the two base/fallback agents) so the product itself is hireable on the
-        Store — not just its base agents. Unknown spec ids are skipped with a
+        Store - not just its base agents. Unknown spec ids are skipped with a
         loud warning rather than silently serving nothing.
         """
         for service_id, spec_id in self._settings.provider_service_map.items():
@@ -278,7 +278,7 @@ class ProviderWorker:
     def _debug_log_event(self, ev) -> None:
         """Redacted one-line summary of an inbound event (opt-in).
 
-        Logs only resource identifiers and the event class/type — never the SDK
+        Logs only resource identifiers and the event class/type - never the SDK
         key, buyer requirements/metadata, or any credential. Enabled via
         CROON_PROVIDER_DEBUG_EVENTS for first-connection field verification.
         """
@@ -307,7 +307,7 @@ class ProviderWorker:
         negotiation_id = self._field(ev, "negotiation_id")
         spec = self._service_specs.get(service_id)
         if spec is None:
-            # Not one of our services — ignore quietly (shared WS may see others).
+            # Not one of our services - ignore quietly (shared WS may see others).
             return
         if not negotiation_id:
             logger.warning("provider: negotiation event missing negotiation_id")
@@ -333,7 +333,7 @@ class ProviderWorker:
 
         # CROON's service has Require Fund Transfer OFF. If the backend ever
         # reports a fund_amount on our negotiation, do NOT guess the accept
-        # variant — surface it and let a human decide.
+        # variant - surface it and let a human decide.
         if (getattr(neg, "fund_amount", "") or "").strip() not in ("", "0"):
             logger.error(
                 "provider: negotiation=%s carries fund_amount=%r but this "
@@ -350,7 +350,7 @@ class ProviderWorker:
         )
         try:
             await self._client.accept_negotiation(negotiation_id)
-        except Exception:  # noqa: BLE001 — keep serving other orders
+        except Exception:  # noqa: BLE001 - keep serving other orders
             logger.exception(
                 "provider: accept failed negotiation=%s", negotiation_id
             )
@@ -396,7 +396,7 @@ class ProviderWorker:
         resolved_service = service_id or getattr(order, "service_id", "")
         spec = self._service_specs.get(resolved_service)
         if spec is None:
-            # Order for a service we don't own (shared WS) — release + ignore.
+            # Order for a service we don't own (shared WS) - release + ignore.
             self._handled_orders.discard(order_id)
             return
 
@@ -425,7 +425,7 @@ class ProviderWorker:
                 # RE-OPENS THE MARKET for this buyer and hires+pays a downstream
                 # child agent via CAP. That spends real USDC, so it must be keyed
                 # on the parent order id for idempotency (WS replay safe) and
-                # bounded by the off-chain spend guard — both handled inside the
+                # bounded by the off-chain spend guard - both handled inside the
                 # brokerage module. All CAP calls still go through CapClient.
                 from croon import brokerage
 
@@ -527,7 +527,7 @@ class ProviderWorker:
 
             # Connect + register, then immediately tear down. We register the
             # real handlers to confirm wiring, but close the socket before the
-            # read loop can meaningfully dispatch — and every handler is a no-op
+            # read loop can meaningfully dispatch - and every handler is a no-op
             # unless a matching owned event arrives, which we do not solicit.
             stream = await client.connect_websocket()
             report["websocket"] = "connected"

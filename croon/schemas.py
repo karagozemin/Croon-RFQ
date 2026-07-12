@@ -25,11 +25,11 @@ class AgentInfo(BaseModel):
     name: str
     category: str | None = None
     listed_price_usdc: Decimal | None = None
-    # SLA / reputation signal (0..1). Placeholder for MVP — see scoring.py.
+    # SLA / reputation signal (0..1). Placeholder for MVP - see scoring.py.
     reputation: float = 0.5
-    is_base_agent: bool = False  # True for OUR fallback providers (§7, §10)
+    is_base_agent: bool = False  # True for OUR fallback providers (sec.7, sec.10)
     # Live mode: the Store service to negotiate against, and the listed SLA used
-    # to DERIVE a quote (CAP has no native quote primitive — spec §4).
+    # to DERIVE a quote (CAP has no native quote primitive - spec sec.4).
     service_id: str | None = None
     listed_eta_seconds: int | None = None
     # Live mode: optional per-service `requirements` schema override. CAP has NO
@@ -69,7 +69,7 @@ class Quote(BaseModel):
 
 
 class Settlement(BaseModel):
-    """Result of hire_and_pay — the on-chain payment outcome."""
+    """Result of hire_and_pay - the on-chain payment outcome."""
 
     order_id: str
     agent_id: str

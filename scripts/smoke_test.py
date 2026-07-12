@@ -4,10 +4,10 @@ Runs THREE scenarios and prints a compact report:
   1. Normal run       -> a market agent wins, gets paid, delivers.
   2. Fallback run     -> all market agents time out (failure injection) AND the
      task category is one a base agent can actually do -> one of OUR base
-     agents wins and delivers its REAL work product (§7/§10).
+     agents wins and delivers its REAL work product (sec.7/sec.10).
   3. No-provider run  -> all market agents time out AND no base agent is
      capability-appropriate for the task category -> the run refuses and spends
-     ZERO budget (budget-protecting risk management, §7).
+     ZERO budget (budget-protecting risk management, sec.7).
 
 Usage:  python -m scripts.smoke_test
 Exit code is non-zero if any invariant fails.

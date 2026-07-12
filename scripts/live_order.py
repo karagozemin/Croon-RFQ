@@ -93,7 +93,7 @@ def persist_live_run(
     with Session(engine) as session:
         existing = session.exec(select(Run).where(Run.tx_hash == tx_hash)).first()
         if existing is not None:
-            return f"noop: live run already present (run_id={existing.id}, tx={tx_hash[:10]}…)"
+            return f"noop: live run already present (run_id={existing.id}, tx={tx_hash[:10]}...)"
 
         # Parent standing order: reuse one with this name, else create it.
         order = session.exec(
@@ -165,7 +165,7 @@ def persist_live_run(
         session.refresh(run)
         return (
             f"created: live run_id={run.id} order_id={order.id} "
-            f"status={status} amount={amount_usdc} tx={tx_hash[:10]}…"
+            f"status={status} amount={amount_usdc} tx={tx_hash[:10]}..."
         )
 
 

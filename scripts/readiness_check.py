@@ -1,4 +1,4 @@
-"""LIVE readiness check — proves CROON can talk to CAP WITHOUT spending a cent.
+"""LIVE readiness check - proves CROON can talk to CAP WITHOUT spending a cent.
 
 This is the demo-day pre-flight. It answers ONE question:
     "If I flip CROON_CAP_MODE=live and press run-now, will it actually work?"
@@ -40,7 +40,7 @@ WARN = "\u26a0\ufe0f"
 
 def _line(ok: bool, label: str, detail: str = "") -> tuple[bool, str]:
     mark = CHECK if ok else CROSS
-    return ok, f"{mark} {label}" + (f" — {detail}" if detail else "")
+    return ok, f"{mark} {label}" + (f" - {detail}" if detail else "")
 
 
 async def main() -> int:
@@ -50,7 +50,7 @@ async def main() -> int:
 
     settings = Settings(cap_mode="live")  # type: ignore[call-arg]
 
-    print("=== CROON RFQ — LIVE readiness check (NO SPEND) ===")
+    print("=== CROON RFQ - LIVE readiness check (NO SPEND) ===")
     print(f"    api_url : {settings.croo_api_url}")
     print(f"    ws_url  : {settings.croo_ws_url}")
     print(f"    rpc_url : {settings.base_rpc_url}")
@@ -66,7 +66,7 @@ async def main() -> int:
         _line(
             bool(key) and key.startswith("croo_sk_"),
             "SDK key present",
-            f"{key[:11]}…" if key else "MISSING — set CROON_CROO_SDK_KEY",
+            f"{key[:11]}..." if key else "MISSING - set CROON_CROO_SDK_KEY",
         )
     )
 
@@ -167,7 +167,7 @@ async def main() -> int:
                 "Child-spend cap covers cheapest candidate",
                 f"cheapest {cheapest} USDC <= cap {cap} USDC"
                 if ok
-                else f"cheapest {cheapest} > cap {cap} — raise CROON_MAX_CHILD_SPEND_USDC",
+                else f"cheapest {cheapest} > cap {cap} - raise CROON_MAX_CHILD_SPEND_USDC",
             )
         )
 
@@ -180,12 +180,12 @@ async def main() -> int:
     for ok, text in results:
         print(f"  {text}")
     print("---")
-    print(f"Transactions initiated: {tx_initiated}  (guaranteed zero — no negotiate/pay called)")
+    print(f"Transactions initiated: {tx_initiated}  (guaranteed zero - no negotiate/pay called)")
 
     all_ok = all(ok for ok, _ in results)
     print(f"\nProvider readiness: {'PASS ' + CHECK if all_ok else 'FAIL ' + CROSS}")
     if all_ok:
-        print("Next: fund confirmed → do ONE controlled live run (run-now) to capture the first child tx.")
+        print("Next: fund confirmed -> do ONE controlled live run (run-now) to capture the first child tx.")
     return 0 if all_ok else 1
 
 

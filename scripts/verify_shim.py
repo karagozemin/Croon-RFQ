@@ -50,7 +50,7 @@ def main() -> int:
 
     print("--- real DeliverableType ---")
     # NOTE: the real croo.types.DeliverableType is a PLAIN class holding bare
-    # string constants (TEXT/SCHEMA), NOT an Enum — so we read attributes, we do
+    # string constants (TEXT/SCHEMA), NOT an Enum - so we read attributes, we do
     # not iterate. (This is the exact mismatch this script caught on 2026-07-12.)
     real_dt_members = {}
     if real_dt is None:

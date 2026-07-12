@@ -1,4 +1,4 @@
-"""CAP provider runner for the two base agents (spec §10).
+"""CAP provider runner for the two base agents (spec sec.10).
 
 This is the SUPPLY side of CAP: the service is created on the Agent Store, and
 this runner listens for incoming negotiations/orders, runs the pure-logic core,
@@ -117,14 +117,14 @@ async def _croon_rfq_handler(task_prompt: str, params: dict) -> str:
                 cap.request_quote(agent, task, settings.rfq_timeout_seconds),
                 timeout=settings.rfq_timeout_seconds,
             )
-        except Exception:  # noqa: BLE001 — a non-responder is simply dropped
+        except Exception:  # noqa: BLE001 - a non-responder is simply dropped
             return None
 
     quotes = [q for q in await asyncio.gather(*[_quote(a) for a in candidates]) if q]
     selection = score_quotes(quotes, budget)
 
     lines = [
-        "CROON RFQ — competitive selection result",
+        "CROON RFQ - competitive selection result",
         f"Task: {task_prompt}",
         f"Category: {category or 'any'} | Budget/run: {budget} USDC",
         f"Bidders quoted: {len(quotes)} of {len(candidates)} candidates",
@@ -143,7 +143,7 @@ async def _croon_rfq_handler(task_prompt: str, params: dict) -> str:
     if selection.winner is not None:
         w = selection.winner
         lines.append(
-            f"Winner: {w.agent_name} @ {w.price_usdc} USDC — {selection.reason}"
+            f"Winner: {w.agent_name} @ {w.price_usdc} USDC - {selection.reason}"
         )
     else:
         lines.append(f"No winner selected: {selection.reason}")
@@ -151,7 +151,7 @@ async def _croon_rfq_handler(task_prompt: str, params: dict) -> str:
 
 
 
-# --- The two base-agent specs (also CROON's fallback providers, §7) ---------
+# --- The two base-agent specs (also CROON's fallback providers, sec.7) ---------
 
 LISTING_COPY_AGENT = AgentSpec(
     agent_id="base_listing_copy",
@@ -191,7 +191,7 @@ BASE_AGENTS: dict[str, AgentSpec] = {
 #
 # kind="main": when a buyer hires THIS service, the deliverable is a full
 # competitive-selection round (discover -> quote -> score -> winner). It is the
-# product itself, not a fallback provider — the operator maps its Store
+# product itself, not a fallback provider - the operator maps its Store
 # service_id to this spec, and the provider status/readiness report labels it
 # "main" so it's clear the brokerage service (not just base agents) is served.
 
@@ -205,7 +205,7 @@ CROON_RFQ_AGENT = AgentSpec(
         "Recurring-demand engine: on every run it re-opens the market, collects "
         "competitive quotes from candidate CROO agents, scores them on "
         "price x reputation x speed, selects the winner under budget, and "
-        "returns a transparent brokerage receipt. Not a cron job — a live "
+        "returns a transparent brokerage receipt. Not a cron job - a live "
         "mini-RFQ every run."
     ),
     eta_seconds=30,

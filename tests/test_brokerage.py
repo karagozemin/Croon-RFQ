@@ -5,9 +5,9 @@ discover -> quote -> score -> hire+pay a downstream child -> return a proof
 bundle. These tests exercise that path fully offline against MockCapClient and
 verify the two hard safety properties:
 
-  * SPEND GUARD  — child spend is capped at CROON_MAX_CHILD_SPEND_USDC even when
+  * SPEND GUARD  - child spend is capped at CROON_MAX_CHILD_SPEND_USDC even when
     the buyer supplies a larger budget.
-  * IDEMPOTENCY  — a replayed parent ORDER_PAID returns the cached deliverable
+  * IDEMPOTENCY  - a replayed parent ORDER_PAID returns the cached deliverable
     and does NOT hire/pay a second child.
 
 No network, no keys, no funded wallet: a MockCapClient is injected directly.
@@ -76,7 +76,7 @@ def test_brokered_order_reopens_market_and_settles_child():
     )
     assert cap.hire_calls == 1
     # Human-readable proof bundle markers.
-    assert "CROON RFQ — brokered fulfilment" in out
+    assert "CROON RFQ - brokered fulfilment" in out
     assert "Competitive quotes:" in out
     assert "Winner:" in out
     assert "receipt hash:" in out
@@ -216,7 +216,7 @@ def test_no_eligible_provider_yields_no_spend_deliverable():
         )
     )
     assert cap.hire_calls == 0
-    assert "No child settlement performed — budget protected." in out
+    assert "No child settlement performed - budget protected." in out
 
 
 if __name__ == "__main__":  # allow `python tests/test_brokerage.py`

@@ -1,11 +1,11 @@
-"""Scoring & selection — the transparent heart of the mini-RFQ (spec §6).
+"""Scoring & selection - the transparent heart of the mini-RFQ (spec sec.6).
 
     score = w_price * price_score + w_rep * reputation_score + w_speed * speed_score
 
 - price_score : normalized so CHEAPER (still under budget) scores higher.
 - speed_score : normalized so LOWER ETA scores higher.
 - reputation_score : MVP placeholder = the quote's self-reported confidence.
-                     (Deliberately NOT a reputation oracle — out of scope, §6.)
+                     (Deliberately NOT a reputation oracle - out of scope, sec.6.)
 - HARD RULE: any quote with price > budget_per_run is EXCLUDED before scoring.
 - Weights are configurable via .env (CROON_W_PRICE / _W_REP / _W_SPEED).
 
@@ -61,7 +61,7 @@ def score_quotes(
 
     records: list[QuoteRecord] = []
 
-    # 1) Hard budget filter (spec §6): over-budget quotes are excluded up front.
+    # 1) Hard budget filter (spec sec.6): over-budget quotes are excluded up front.
     eligible: list[Quote] = []
     for q in quotes:
         if q.price_usdc > budget_per_run_usdc:
@@ -117,7 +117,7 @@ def score_quotes(
         )
 
     # 4) Winner = highest score among eligible (records order: excluded first,
-    #    then eligible — so pick the max over non-excluded).
+    #    then eligible - so pick the max over non-excluded).
     scored_eligible = [r for r in records if not r.excluded and r.score is not None]
     winner = max(scored_eligible, key=lambda r: r.score)  # type: ignore[arg-type]
 

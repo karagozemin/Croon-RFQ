@@ -1,9 +1,9 @@
-"""In-memory event bus — streams live run progress to the demo UI.
+"""In-memory event bus - streams live run progress to the demo UI.
 
 Deliberately tiny: a per-standing-order ring buffer of events. The UI polls
 `GET /standing-orders/{id}/events?after=<seq>` (~1s) to render the mini-RFQ
-moment live. No external broker, no WebSocket dependency — just enough to make
-the money shot (spec §9) work reliably on demo day.
+moment live. No external broker, no WebSocket dependency - just enough to make
+the money shot (spec sec.9) work reliably on demo day.
 """
 
 from __future__ import annotations

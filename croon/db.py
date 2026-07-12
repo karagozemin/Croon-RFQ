@@ -1,8 +1,9 @@
+"""Database engine and session management.
 
 Supports both SQLite (default, demo-grade) and any SQLAlchemy URL such as
 Postgres (recommended for a hosted deployment where the container filesystem is
 ephemeral). The engine is configured per-dialect so switching persistence
-backends is a pure CROON_DATABASE_URL change — no code edits.
+backends is a pure CROON_DATABASE_URL change - no code edits.
 """
 
 from __future__ import annotations
@@ -23,13 +24,13 @@ _settings = get_settings()
 def _make_engine(database_url: str):
     """Build a dialect-appropriate engine.
 
-    * SQLite — set check_same_thread=False so the FastAPI request threads and
+    * SQLite - set check_same_thread=False so the FastAPI request threads and
       the background scheduler thread can share one connection, and eagerly
       create the parent directory. The second part is what makes a *persistent*
       path work: point CROON_DATABASE_URL at a mounted volume (e.g.
       sqlite:////data/croon.db) and the file survives redeploys instead of
       living in an ephemeral /tmp that DigitalOcean wipes on every rebuild.
-    * Non-SQLite (e.g. Postgres) — do NOT pass check_same_thread (it's a
+    * Non-SQLite (e.g. Postgres) - do NOT pass check_same_thread (it's a
       SQLite-only arg and errors elsewhere); the driver's own pool handles
       cross-thread access. This is the truly durable option for a hosted app.
     """
@@ -48,7 +49,7 @@ def _make_engine(database_url: str):
             connect_args={"check_same_thread": False},
         )
 
-    # Postgres / MySQL / etc. — pre_ping avoids stale-connection errors after a
+    # Postgres / MySQL / etc. - pre_ping avoids stale-connection errors after a
     # hosted DB idles the socket.
     return create_engine(database_url, echo=False, pool_pre_ping=True)
 

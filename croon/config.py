@@ -21,7 +21,7 @@ def _loads_json(raw: str | None, *, default):
     env vars wrapped in an extra pair of quotes ("[{...}]"), or double-encoded
     (a JSON string whose *content* is itself JSON). A single json.loads then
     returns a plain string instead of the list/dict we expect, callers see the
-    wrong type, and the value silently degrades to empty — which, for the RFQ
+    wrong type, and the value silently degrades to empty - which, for the RFQ
     candidate roster, kills all A2A diversity. This peels up to a few layers and
     only ever returns something of `type(default)`, else `default`.
     """
@@ -45,7 +45,7 @@ def _loads_json(raw: str | None, *, default):
             continue
         except (json.JSONDecodeError, ValueError):
             pass
-        # Straight decode failed — the host likely wrapped the value in an extra
+        # Straight decode failed - the host likely wrapped the value in an extra
         # pair of quotes ("[{...}]" / '[{...}]'). Peel one symmetric pair and
         # retry once; anything still unparseable is genuinely broken -> default.
         if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     w_rep: float = 0.35
     w_speed: float = 0.25
 
-    # --- LIVE mode only (CROO CAP SDK — confirmed against Python SDK Reference) ---
+    # --- LIVE mode only (CROO CAP SDK - confirmed against Python SDK Reference) ---
     # Auth: AgentClient(config, sdk_key). Key format `croo_sk_...`, from Dashboard.
     # Each field accepts BOTH our prefixed name (CROON_*) AND the SDK's own
     # native env name (e.g. CROO_SDK_KEY, BASE_RPC_URL) so a wallet/SDK already
@@ -140,17 +140,17 @@ class Settings(BaseSettings):
 
     # SDK has NO discovery primitive (account/service setup lives in the Store).
     # So live candidates are a configured roster of Store service IDs. Quotes are
-    # DERIVED from each listed price/SLA (spec §4). JSON list of objects:
+    # DERIVED from each listed price/SLA (spec sec.4). JSON list of objects:
     #   [{"agent_id","name","service_id","category",
     #     "listed_price_usdc","listed_eta_seconds","reputation"}, ...]
     live_candidates_json: str = "[]"           # -> CROON_LIVE_CANDIDATES_JSON
 
-    # OUR base agent used as the fallback provider (§7). Its Store service id.
+    # OUR base agent used as the fallback provider (sec.7). Its Store service id.
     fallback_service_id: str | None = None     # -> CROON_FALLBACK_SERVICE_ID
     fallback_agent_id: str | None = None
     fallback_agent_name: str = "CROON Fallback Provider"
 
-    # --- Base-agent PROVIDER worker (spec §10; supply side) ------------------
+    # --- Base-agent PROVIDER worker (spec sec.10; supply side) ------------------
     # When enabled (and in live mode with a valid SDK key), CROON runs the two
     # base agents as CAP providers: it opens the SDK WebSocket, accepts
     # negotiations for its owned services, and delivers on ORDER_PAID.
@@ -182,7 +182,7 @@ class Settings(BaseSettings):
         value becomes  "[{...}]"  instead of  [{...}] ), or even
         double-JSON-encoded. A naive json.loads then yields a *string* (or
         raises), isinstance(list) is False, and the roster silently collapses to
-        [] → every run falls to the fallback provider and the A2A diversity that
+        [] -> every run falls to the fallback provider and the A2A diversity that
         the whole demo depends on disappears. _loads_json peels those layers so a
         misconfigured env can never zero out the roster.
         """

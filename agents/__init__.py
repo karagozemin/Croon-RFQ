@@ -1,12 +1,12 @@
-"""CROON base agents — standalone, CAP-callable provider services (spec §10).
+"""CROON base agents - standalone, CAP-callable provider services (spec sec.10).
 
 Two real, hireable providers that accept USDC and settle on-chain:
 
-  1. Listing Copy Agent  — repo URL/description -> Agent Store listing copy.
-  2. Base Gas Oracle      — current Base gas + estimated USDC-transfer / CAP-call
+  1. Listing Copy Agent  - repo URL/description -> Agent Store listing copy.
+  2. Base Gas Oracle      - current Base gas + estimated USDC-transfer / CAP-call
                             cost.
 
-They are independent products AND double as CROON RFQ's fallback providers (§7).
+They are independent products AND double as CROON RFQ's fallback providers (sec.7).
 
 Design split (same discipline as the rest of the repo):
   - `*_core` functions are PURE LOGIC: deterministic, no network, unit-testable.

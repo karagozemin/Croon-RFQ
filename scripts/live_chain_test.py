@@ -1,4 +1,4 @@
-"""Full LIVE CAP chain test — step by step, with per-step logging.
+"""Full LIVE CAP chain test - step by step, with per-step logging.
 
 Run:
   PYTHONPATH="$PWD" .venv/bin/python scripts/live_chain_test.py
@@ -11,7 +11,7 @@ Chain (each step logged; STOPS at the first failure):
   5. get_delivery             -> deliverable text
 
 Spend safety: USDC only leaves the wallet at step 4 (pay_order). If the chain
-fails at steps 1-3, NOTHING is spent — we log that explicitly. We also print the
+fails at steps 1-3, NOTHING is spent - we log that explicitly. We also print the
 wallet USDC balance before and after so any spend is visible.
 
 This is intentionally OUTSIDE the engine so we can observe each raw SDK step and

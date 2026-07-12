@@ -1,4 +1,4 @@
-"""Mini-RFQ engine — Layers C + D (the differentiator + settlement).
+"""Mini-RFQ engine - Layers C + D (the differentiator + settlement).
 
 On EVERY run we RE-OPEN THE MARKET (this is why it's not a cron job):
   1. discover 2-3 candidate agents            (Layer C)
@@ -8,13 +8,13 @@ On EVERY run we RE-OPEN THE MARKET (this is why it's not a cron job):
   5. fetch delivery, assemble a signed receipt (Layer D)
   6. append the Run to history                 (Layer A)
 
-Fallback (spec §7): if < 1 valid quote returns within the RFQ timeout, we do
-NOT crash — we route to one of OUR base agents, hire+pay it normally, and mark
+Fallback (spec sec.7): if < 1 valid quote returns within the RFQ timeout, we do
+NOT crash - we route to one of OUR base agents, hire+pay it normally, and mark
 `fallback_used = True`. This is budget-protecting risk management AND makes the
 base agents part of the product.
 
 Live progress is published to an in-memory event bus so the demo UI can render
-the mini-RFQ moment (quotes arriving → scoring → winner → payment → receipt).
+the mini-RFQ moment (quotes arriving -> scoring -> winner -> payment -> receipt).
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def _capable_fallbacks(
     Matching is by task category against each provider's declared capabilities
     (or its own category as a fallback). If `category` is None we cannot verify
     capability, so we refuse to guess (returns []). The caller then marks the
-    run `no_provider_available` and spends no budget (§7 risk management).
+    run `no_provider_available` and spends no budget (sec.7 risk management).
     """
     if not category:
         return []
@@ -103,7 +103,7 @@ def _capable_fallbacks(
 
 def _fallback_agents(settings) -> list[AgentInfo]:
 
-    """Resolve the fallback provider roster (§7) for the active CAP mode.
+    """Resolve the fallback provider roster (sec.7) for the active CAP mode.
 
     - mock : the built-in base agents modeled in MockCapClient.
     - live : OUR base agent identified by CROON_FALLBACK_* env vars. It must be
@@ -190,7 +190,7 @@ async def execute_run(
     capable_fallbacks = _capable_fallbacks(fallback_roster, order.category)
 
     def _no_provider(reason: str) -> Run:
-        """Mark the run as no_provider_available and spend NO budget (§7)."""
+        """Mark the run as no_provider_available and spend NO budget (sec.7)."""
         run.status = "no_provider_available"
         run.selection_reason = reason
         run.amount_paid_usdc = Decimal("0")
@@ -222,20 +222,20 @@ async def execute_run(
 
         fallback_used = False
 
-        # --- Fallback (§7): fewer than 1 valid quote -> base agent --------
+        # --- Fallback (sec.7): fewer than 1 valid quote -> base agent --------
         if len(quotes) < 1:
             # A fallback must be CAPABILITY-appropriate. If no base agent can do
             # this task category, we refuse and spend NOTHING (risk management).
             if not capable_fallbacks:
                 return _no_provider(
                     "no live bids and no capability-appropriate fallback "
-                    f"provider for category '{order.category}' — budget "
+                    f"provider for category '{order.category}' - budget "
                     "protected, no spend"
                 )
             emit(
                 "fallback_triggered",
                 message=(
-                    "No live bids received — budget protection active — "
+                    "No live bids received - budget protection active - "
                     "routing to capability-matched fallback provider."
                 ),
             )
@@ -246,7 +246,7 @@ async def execute_run(
             fallback_used = True
             if len(quotes) < 1:
                 return _no_provider(
-                    "capability-matched fallback provider did not respond — "
+                    "capability-matched fallback provider did not respond - "
                     "budget protected, no spend"
                 )
 
@@ -264,7 +264,7 @@ async def execute_run(
                 emit(
                     "fallback_triggered",
                     message=(
-                        "All quotes exceeded per-run budget — routing to "
+                        "All quotes exceeded per-run budget - routing to "
                         "capability-matched fallback provider."
                     ),
                 )
@@ -283,7 +283,7 @@ async def execute_run(
                 # Nothing eligible and no capable fallback under budget.
                 return _no_provider(
                     "no eligible quote under budget and no capability-matched "
-                    "fallback under budget — budget protected, no spend"
+                    "fallback under budget - budget protected, no spend"
                 )
 
 
@@ -308,9 +308,9 @@ async def execute_run(
                 winner_info, task, winner.price_usdc
             )
         except Exception as hire_exc:  # noqa: BLE001
-            # §7 (hire-time): the selected live provider refused to transact
+            # sec.7 (hire-time): the selected live provider refused to transact
             # (negotiation REJECTED/EXPIRED or timed out). A non-cooperative
-            # provider is a supply failure just like a no-bid — so we DON'T
+            # provider is a supply failure just like a no-bid - so we DON'T
             # crash. We route to a capability-matched base agent (which we
             # control and which auto-accepts), spending nothing on the reject.
             eligible_fb = [
@@ -322,7 +322,7 @@ async def execute_run(
                 "fallback_triggered",
                 message=(
                     f"Winner '{winner.agent_name}' declined to transact "
-                    f"({hire_exc}). Budget protection active — routing to "
+                    f"({hire_exc}). Budget protection active - routing to "
                     "capability-matched fallback provider."
                 ),
             )
@@ -336,7 +336,7 @@ async def execute_run(
             if selection.winner is None:
                 return _no_provider(
                     "winner declined and no capability-matched fallback under "
-                    "budget — budget protected, no spend"
+                    "budget - budget protected, no spend"
                 )
             winner = selection.winner
             winner_info = _find_agent(candidates + fallback_roster, winner.agent_id)
@@ -361,7 +361,7 @@ async def execute_run(
         )
 
 
-        # --- Truthful labeling (§ integrity) ------------------------------
+        # --- Truthful labeling (sec. integrity) ------------------------------
         # If the LIVE settlement silently failed over to mock, the tx_hash is a
         # FAKE, BaseScan-invalid hash. We MUST NOT present such a run as a real
         # on-chain live payment. Relabel it as a degraded/mock settlement so the
@@ -372,14 +372,14 @@ async def execute_run(
             emit(
                 "settlement_degraded",
                 message=(
-                    "Live settlement failed — payment completed on the mock "
+                    "Live settlement failed - payment completed on the mock "
                     "network. tx_hash is NOT a real on-chain transaction."
                 ),
             )
         # A SECOND, independent integrity check: the live path may report SUCCESS
         # (no failover) yet return a tx_hash we could NOT confirm on the Base RPC
         # (settlement.tx_verified is False). That is exactly the silent failure
-        # paid_via_mock cannot catch — the SDK "succeeded" but nothing is on
+        # paid_via_mock cannot catch - the SDK "succeeded" but nothing is on
         # chain. Do NOT present it as a verified live payment.
         elif settlement.tx_verified is False:
             run.mode = "unverified"
@@ -387,7 +387,7 @@ async def execute_run(
                 "settlement_unverified",
                 message=(
                     "Payment reported by the SDK but tx_hash was NOT found on "
-                    "the configured Base RPC. Marked UNVERIFIED — not a "
+                    "the configured Base RPC. Marked UNVERIFIED - not a "
                     "confirmable on-chain settlement."
                 ),
                 tx_hash=settlement.tx_hash,
@@ -444,7 +444,7 @@ async def execute_run(
         emit("run_completed", status=run.status)
         return run
 
-    except Exception as exc:  # noqa: BLE001 — graceful failure, never crash loop
+    except Exception as exc:  # noqa: BLE001 - graceful failure, never crash loop
         run.status = "failed"
         run.selection_reason = f"error: {exc}"
         run.finished_at = _now()
@@ -466,7 +466,7 @@ async def _collect_quotes(
 ) -> list[Quote]:
     """Request quotes from all agents in parallel under a strict timeout.
 
-    Any agent that times out or returns None is simply dropped — the round
+    Any agent that times out or returns None is simply dropped - the round
     proceeds with whatever valid quotes arrived.
     """
 

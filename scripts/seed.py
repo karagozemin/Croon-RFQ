@@ -3,7 +3,7 @@
 Run AFTER installing deps:  python scripts/seed.py
 
 Uses the same pipeline the API uses (MockCapClient in mock mode), so the demo
-opens with a non-empty run history (spec §12: "a run history with multiple
+opens with a non-empty run history (spec sec.12: "a run history with multiple
 completed runs").
 """
 
