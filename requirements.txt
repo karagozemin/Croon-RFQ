@@ -10,4 +10,11 @@ python-dotenv>=1.0
 # mock mode also works. If it fails at runtime, FailoverCapClient drops to mock.
 croo-sdk>=0.2.1
 
+# Optional durable-persistence driver. SQLite (default) is fine for the demo,
+# but on an ephemeral host a Managed Postgres survives redeploys — just point
+# CROON_DATABASE_URL at its connection string and db.py uses it automatically.
+# Harmless to ship even when SQLite is used (only imported for postgres URLs).
+psycopg2-binary>=2.9
+
+
 

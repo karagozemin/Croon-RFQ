@@ -1,8 +1,15 @@
-"""SQLite engine + session helpers (via SQLModel)."""
+
+Supports both SQLite (default, demo-grade) and any SQLAlchemy URL such as
+Postgres (recommended for a hosted deployment where the container filesystem is
+ephemeral). The engine is configured per-dialect so switching persistence
+backends is a pure CROON_DATABASE_URL change — no code edits.
+"""
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
+from pathlib import Path
 
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
@@ -12,12 +19,43 @@ from croon.config import get_settings
 
 _settings = get_settings()
 
-# check_same_thread=False so FastAPI + the scheduler thread can share the engine.
-engine = create_engine(
-    _settings.database_url,
-    echo=False,
-    connect_args={"check_same_thread": False},
-)
+
+def _make_engine(database_url: str):
+    """Build a dialect-appropriate engine.
+
+    * SQLite — set check_same_thread=False so the FastAPI request threads and
+      the background scheduler thread can share one connection, and eagerly
+      create the parent directory. The second part is what makes a *persistent*
+      path work: point CROON_DATABASE_URL at a mounted volume (e.g.
+      sqlite:////data/croon.db) and the file survives redeploys instead of
+      living in an ephemeral /tmp that DigitalOcean wipes on every rebuild.
+    * Non-SQLite (e.g. Postgres) — do NOT pass check_same_thread (it's a
+      SQLite-only arg and errors elsewhere); the driver's own pool handles
+      cross-thread access. This is the truly durable option for a hosted app.
+    """
+    if database_url.startswith("sqlite"):
+        # Extract the on-disk path (everything after the scheme's ':///').
+        # sqlite:///relative.db  -> relative.db
+        # sqlite:////data/abs.db -> /data/abs.db
+        raw_path = database_url.split(":///", 1)[-1]
+        if raw_path and raw_path != ":memory:":
+            parent = Path(raw_path).expanduser().parent
+            if str(parent) not in ("", "."):
+                os.makedirs(parent, exist_ok=True)
+        return create_engine(
+            database_url,
+            echo=False,
+            connect_args={"check_same_thread": False},
+        )
+
+    # Postgres / MySQL / etc. — pre_ping avoids stale-connection errors after a
+    # hosted DB idles the socket.
+    return create_engine(database_url, echo=False, pool_pre_ping=True)
+
+
+# check_same_thread handling + persistent-path creation live in _make_engine.
+engine = _make_engine(_settings.database_url)
+
 
 
 # Additive, idempotent column migrations for existing SQLite DBs.

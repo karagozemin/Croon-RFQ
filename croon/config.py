@@ -14,9 +14,56 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _loads_json(raw: str | None, *, default):
+    """Parse a JSON env var, tolerant of common hosting mangling.
+
+    DigitalOcean App Platform, Docker `ENV`, and shells routinely deliver JSON
+    env vars wrapped in an extra pair of quotes ("[{...}]"), or double-encoded
+    (a JSON string whose *content* is itself JSON). A single json.loads then
+    returns a plain string instead of the list/dict we expect, callers see the
+    wrong type, and the value silently degrades to empty — which, for the RFQ
+    candidate roster, kills all A2A diversity. This peels up to a few layers and
+    only ever returns something of `type(default)`, else `default`.
+    """
+    if raw is None:
+        return default
+
+    value: object = raw
+    for _ in range(3):  # peel at most 3 nested-encoding layers; enough in practice
+        if isinstance(value, type(default)):
+            return value
+        if not isinstance(value, str):
+            break
+        text = value.strip()
+        if not text:
+            return default
+        # Try a straight decode FIRST. This is the common path, and it's also
+        # what un-nests a double-JSON-encoded value (a JSON string whose content
+        # is itself JSON): the first pass yields a str, the loop feeds it back.
+        try:
+            value = json.loads(text)
+            continue
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Straight decode failed — the host likely wrapped the value in an extra
+        # pair of quotes ("[{...}]" / '[{...}]'). Peel one symmetric pair and
+        # retry once; anything still unparseable is genuinely broken -> default.
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+            inner = text[1:-1].strip()
+            if inner and inner[0] in ("[", "{"):
+                try:
+                    value = json.loads(inner)
+                    continue
+                except (json.JSONDecodeError, ValueError):
+                    return default
+        return default
+
+    return value if isinstance(value, type(default)) else default
+
 
 
 class Settings(BaseSettings):
+
     """App settings. Prefix `CROON_` maps env vars to fields."""
 
     model_config = SettingsConfigDict(
@@ -128,21 +175,29 @@ class Settings(BaseSettings):
 
     @property
     def live_candidates(self) -> list[dict]:
-        """Parsed live candidate roster (see live_candidates_json)."""
-        try:
-            data = json.loads(self.live_candidates_json or "[]")
-            return data if isinstance(data, list) else []
-        except json.JSONDecodeError:
-            return []
+        """Parsed live candidate roster (see live_candidates_json).
+
+        Hardened against hosting quirks: DigitalOcean / Docker / shell env vars
+        frequently arrive wrapped in an extra pair of quotes (e.g. the literal
+        value becomes  "[{...}]"  instead of  [{...}] ), or even
+        double-JSON-encoded. A naive json.loads then yields a *string* (or
+        raises), isinstance(list) is False, and the roster silently collapses to
+        [] → every run falls to the fallback provider and the A2A diversity that
+        the whole demo depends on disappears. _loads_json peels those layers so a
+        misconfigured env can never zero out the roster.
+        """
+        data = _loads_json(self.live_candidates_json, default=[])
+        return data if isinstance(data, list) else []
 
     @property
     def provider_service_map(self) -> dict[str, str]:
-        """Parsed {service_id: agent_spec_id} map (see provider_service_map_json)."""
-        try:
-            data = json.loads(self.provider_service_map_json or "{}")
-            return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
-        except json.JSONDecodeError:
-            return {}
+        """Parsed {service_id: agent_spec_id} map (see provider_service_map_json).
+
+        Same quote/double-encode hardening as live_candidates (see there).
+        """
+        data = _loads_json(self.provider_service_map_json, default={})
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
 
 
 
