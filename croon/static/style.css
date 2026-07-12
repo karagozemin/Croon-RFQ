@@ -344,6 +344,69 @@ textarea { resize: vertical; min-height: 64px; }
 .empty-note { font-family: var(--mono); font-size: 11px; color: var(--dim); line-height: 2.2; letter-spacing: 1px; padding: 20px 8px; }
 .empty-note code { color: var(--amber); }
 
+/* ===================== SETTLEMENT — waiting on chain ===================== */
+.settling {
+  display: flex; align-items: center; gap: 20px;
+  border: 1px solid var(--amber); background: var(--amber-dim);
+  padding: 18px 20px; margin: 6px 0 20px;
+  position: relative; overflow: hidden;
+  animation: settleIn .45s var(--ease);
+}
+.settling::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(245,179,1,.08), transparent);
+  transform: translateX(-100%); animation: settleSweep 1.6s var(--ease) infinite;
+}
+@keyframes settleIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes settleSweep { to { transform: translateX(100%); } }
+
+.settling-orbit { position: relative; width: 52px; height: 52px; flex: none; }
+.s-coin {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-family: var(--mono); font-weight: 700; font-size: 20px; color: var(--amber);
+  animation: coinPulse 1.2s var(--ease) infinite;
+}
+@keyframes coinPulse { 0%,100% { transform: scale(1); opacity: .95; } 50% { transform: scale(1.18); opacity: 1; } }
+.s-ring {
+  position: absolute; inset: 0; border: 1.5px solid var(--amber); border-radius: 50%;
+  opacity: 0; animation: ringOut 1.6s var(--ease) infinite;
+}
+.s-ring.d2 { animation-delay: .8s; }
+@keyframes ringOut {
+  0% { transform: scale(.4); opacity: .8; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+
+.settling-body { flex: 1; min-width: 0; }
+.settling-head { font-size: 12px; letter-spacing: 2px; color: var(--amber); display: flex; align-items: center; gap: 4px; }
+.settling-head b { color: var(--bone); }
+.s-dots { display: inline-flex; gap: 3px; margin-left: 4px; }
+.s-dots i { width: 3px; height: 3px; border-radius: 50%; background: var(--amber); opacity: .3; animation: dotBlink 1.2s infinite; }
+.s-dots i:nth-child(2) { animation-delay: .2s; }
+.s-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes dotBlink { 0%,100% { opacity: .3; } 50% { opacity: 1; } }
+
+.settling-sub { font-size: 10px; letter-spacing: 1px; color: var(--dim); margin-top: 6px; }
+.settling-sub b { color: var(--bone); }
+.settling-track { height: 3px; background: var(--hair); margin-top: 12px; overflow: hidden; position: relative; }
+.settling-shimmer {
+  position: absolute; top: 0; left: 0; height: 100%; width: 38%;
+  background: var(--amber); box-shadow: 0 0 12px rgba(245,179,1,.6);
+  animation: shimmerRun 1.3s var(--ease) infinite;
+}
+@keyframes shimmerRun {
+  0% { left: -40%; } 100% { left: 100%; }
+}
+.settling-foot { font-size: 9px; letter-spacing: 1.5px; color: var(--dim); margin-top: 9px; }
+.settling-foot #settling-timer { color: var(--amber); }
+
+.settling.done { border-color: var(--green); background: rgba(88,214,141,.1); }
+.settling.done::before, .settling.done .s-ring, .settling.done .settling-shimmer { animation: none; }
+.settling.done .s-coin { color: var(--green); animation: none; }
+.settling.done .settling-head { color: var(--green); }
+.settling.done .settling-head b { color: var(--green); }
+
+
 @media (max-width: 1100px) {
   .floor { grid-template-columns: 1fr; }
   .book, .auction, .ledger { min-height: 0; }

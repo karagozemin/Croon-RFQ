@@ -201,7 +201,10 @@ const App = (() => {
   let lastSeq = 0;
   let pollTimer = null;
   let running = false;
+  let settleTimer = null;
+  let settleStart = 0;
   const bidders = new Map(); // agent_id -> card element
+
 
   /* ---------- boot ---------- */
 
@@ -415,7 +418,9 @@ const App = (() => {
     $("#bidders").innerHTML = "";
     $("#stage-log").innerHTML = "";
     $("#budget-val").textContent = usdc(o.budget_per_run_usdc);
+    hideSettling();
     startPolling();
+
     try {
       await api(`/standing-orders/${o.id}/run-now`, { method: "POST" });
     } catch (e) {
@@ -560,11 +565,13 @@ const App = (() => {
           }
         });
         log("ok", "winner_selected", `<b>${esc(nm)}</b>${d.reason ? " — " + esc(d.reason) : ""}`);
+        showSettling(nm);
         break;
       }
 
       case "payment_pending":
         log("", "payment_pending", `settling with ${esc(d.agent_name || "winner")} · USDC on BASE`);
+        showSettling(d.agent_name || "winner");
         break;
 
       case "payment_completed": {
@@ -576,9 +583,11 @@ const App = (() => {
             ? `tx <span class="hash" data-h="${esc(tx)}">${esc(short(tx))}</span>`
             : "settled"
         );
+        finishSettling(tx);
         bindHashCopy();
         break;
       }
+
 
       case "receipt_generated":
         log("ok", "receipt_generated", d.receipt_hash ? `sha256 ${esc(short(d.receipt_hash))}` : "signed receipt filed");
@@ -597,7 +606,51 @@ const App = (() => {
     }
   }
 
+  /* ---------- settlement panel ---------- */
+
+  function showSettling(agentName) {
+    const box = $("#settling");
+    box.classList.remove("hidden", "done");
+    $("#settling-agent").textContent = (agentName || "WINNER").toUpperCase();
+    $("#settling-sub").innerHTML =
+      `HIRING <b id="settling-agent">${esc((agentName || "WINNER").toUpperCase())}</b> · SIGNING USDC TRANSFER`;
+    settleStart = Date.now();
+    stopSettleTimer();
+    const tick = () => {
+      const s = (Date.now() - settleStart) / 1000;
+      $("#settling-timer").textContent = `${s.toFixed(1)}s`;
+    };
+    tick();
+    settleTimer = setInterval(tick, 100);
+  }
+
+  function finishSettling(tx) {
+    stopSettleTimer();
+    const box = $("#settling");
+    if (box.classList.contains("hidden")) return;
+    box.classList.add("done");
+    const secs = ((Date.now() - settleStart) / 1000).toFixed(1);
+    $("#settling-sub").innerHTML = tx
+      ? `CONFIRMED · <span class="hash" data-h="${esc(tx)}">${esc(short(tx))}</span>`
+      : `CONFIRMED ON BASE`;
+    $("#settling-timer").textContent = `${secs}s`;
+    bindHashCopy();
+  }
+
+  function hideSettling() {
+    stopSettleTimer();
+    $("#settling").classList.add("hidden");
+    $("#settling").classList.remove("done");
+  }
+
+
+  function stopSettleTimer() {
+    if (settleTimer) clearInterval(settleTimer);
+    settleTimer = null;
+  }
+
   function bindHashCopy() {
+
     $$(".stage-log .hash").forEach((el) => {
       if (el.dataset.bound) return;
       el.dataset.bound = "1";
@@ -685,8 +738,10 @@ const App = (() => {
     } catch {
       return;
     }
+    const isLiveTx = String(r.mode || "").toLowerCase() === "live";
     const quotes = r.quotes || [];
     const rows = quotes
+
       .map((q) => {
         const id = q.agent_id || q.agentId;
         const won = id === r.winner_agent_id;

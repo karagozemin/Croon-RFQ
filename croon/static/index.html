@@ -160,8 +160,25 @@ sha256:9f2ae4…</pre></div>
           <div class="stage-live hidden" id="stage-live">
             <div class="budget-line mono" id="budget-line">BUDGET LINE — <b id="budget-val"></b> USDC</div>
             <div class="bidders" id="bidders"></div>
+
+            <!-- SETTLEMENT — the "waiting on the chain" moment -->
+            <div class="settling hidden" id="settling" aria-live="polite">
+              <div class="settling-orbit">
+                <span class="s-coin">$</span>
+                <span class="s-ring"></span>
+                <span class="s-ring d2"></span>
+              </div>
+              <div class="settling-body">
+                <div class="settling-head mono">SETTLING ON <b>BASE</b><span class="s-dots"><i></i><i></i><i></i></span></div>
+                <div class="settling-sub mono" id="settling-sub">HIRING <b id="settling-agent">WINNER</b> · SIGNING USDC TRANSFER</div>
+                <div class="settling-track"><i class="settling-shimmer"></i></div>
+                <div class="settling-foot mono">WAITING FOR ON-CHAIN CONFIRMATION · <span id="settling-timer">0.0s</span></div>
+              </div>
+            </div>
+
             <div class="stage-log mono" id="stage-log"></div>
           </div>
+
         </div>
       </section>
 
