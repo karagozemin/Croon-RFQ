@@ -247,16 +247,54 @@ section.anatomy, section.proof, section.funeral { padding: 110px clamp(24px, 7vw
 .budget-line { font-size: 10px; letter-spacing: 2px; color: var(--red); border-bottom: 1px dashed var(--red); padding-bottom: 6px; margin-bottom: 22px; opacity: .85; }
 .budget-line b { font-size: 12px; }
 
-.bidders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; min-height: 190px; margin-bottom: 22px; }
+.bidders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; min-height: 190px; margin-bottom: 22px; perspective: 1400px; }
 .bidder {
   border: 1px solid var(--hair-2); background: var(--ink); padding: 16px 14px;
-  opacity: 0; transform: translateY(24px) scale(.96);
-  transition: all .5s var(--ease);
+  position: relative; overflow: hidden;
+  opacity: 0; transform-origin: 50% 120%;
+  transform: translateY(46px) rotateX(34deg) scale(.9);
+  filter: blur(3px);
+  transition:
+    opacity .5s var(--ease),
+    transform .62s var(--ease),
+    filter .5s var(--ease),
+    border-color .3s var(--ease),
+    background .3s var(--ease),
+    box-shadow .3s var(--ease);
 }
-.bidder.dealt { opacity: 1; transform: none; }
+/* dealt-in "card off the deck" flourish */
+.bidder.dealt {
+  opacity: 1; filter: none;
+  transform: none;
+  animation: dealSettle .62s var(--ease);
+}
+/* the sweep of light as each card lands */
+.bidder.dealt::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(245,179,1,.16) 50%, transparent 70%);
+  transform: translateX(-120%);
+  animation: cardSheen .7s var(--ease) .04s;
+}
+@keyframes dealSettle {
+  0%   { transform: translateY(46px) rotateX(34deg) scale(.9); }
+  55%  { transform: translateY(-6px) rotateX(-4deg) scale(1.015); }
+  78%  { transform: translateY(2px) rotateX(1deg) scale(.998); }
+  100% { transform: none; }
+}
+@keyframes cardSheen { to { transform: translateX(120%); } }
 .bidder.loser { opacity: .3; filter: grayscale(1); transform: scale(.95); }
 .bidder.excluded { border-color: var(--red); }
-.bidder.winner { border-color: var(--amber); background: var(--amber-dim); box-shadow: 0 0 30px rgba(245,179,1,.12); }
+.bidder.winner {
+  border-color: var(--amber); background: var(--amber-dim);
+  box-shadow: 0 0 30px rgba(245,179,1,.12);
+  animation: winnerPop .5s var(--ease);
+}
+@keyframes winnerPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.05); box-shadow: 0 0 46px rgba(245,179,1,.35); }
+  100% { transform: scale(1); }
+}
+
 .b-name { font-weight: 600; font-size: 13.5px; display: flex; justify-content: space-between; align-items: center; }
 .b-base { font-size: 9px; color: var(--amber); border: 1px solid var(--amber); padding: 0 5px; letter-spacing: 1px; }
 .b-price { font-family: var(--mono); font-size: 21px; color: var(--amber); margin: 10px 0 2px; min-height: 27px; }
