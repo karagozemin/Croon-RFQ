@@ -140,7 +140,13 @@ async def execute_run(
 ) -> Run:
     """Execute ONE full mini-RFQ + settlement cycle for a standing order."""
     settings = get_settings()
-    run = Run(standing_order_id=order.id, status="running", started_at=_now())
+    run = Run(
+        standing_order_id=order.id,
+        status="running",
+        started_at=_now(),
+        mode="live" if settings.is_live else "mock",
+    )
+
     session.add(run)
     session.commit()
     session.refresh(run)

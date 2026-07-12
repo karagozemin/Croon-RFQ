@@ -68,10 +68,16 @@ class Run(SQLModel, table=True):
 
     status: str = "running"  # running | completed | failed | fallback_used
 
+    # Which CapClient produced this run: "mock" | "live". Lets us separate
+    # deterministic test runs from REAL on-chain settlements (a live run carries
+    # a BaseScan-verifiable tx_hash and must never be lost among mock rows).
+    mode: str = Field(default="mock", index=True)
+
     # Every agent that quoted (list[QuoteRecord]) serialized to JSON.
     quotes_json: str = "[]"
 
     winner_agent_id: str | None = None
+
     selection_reason: str = ""
     amount_paid_usdc: Decimal = Field(default=Decimal("0"))
     tx_hash: str | None = None  # Base tx, BaseScan-linkable

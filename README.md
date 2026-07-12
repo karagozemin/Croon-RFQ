@@ -83,19 +83,53 @@ This repo currently implements **Build Order steps 1–3** (spec §11):
       standing order → `run_now` → collect mock quotes → score → select → pay
       (mock) → build receipt → store run.
 - [x] **Step 3** — Demo UI rendering the mini-RFQ moment + run history.
-- [~] **Step 4** — Real `CapClient` (`LiveCapClient`) wired to the official
-      CROO CAP Python SDK (`croo-sdk`). Method mapping is confirmed and coded
-      (see *The CapClient boundary* below). Remaining: an SDK key
-      (`croo_sk_...`), a USDC-funded AA wallet, and one real end-to-end paid run
-      on Base to capture a BaseScan tx hash — these need live credentials from
-      the operator.
+- [x] **Step 4** — Real `CapClient` (`LiveCapClient`) wired to the official
+      CROO CAP Python SDK (`croo-sdk`), and **one real end-to-end paid run
+      settled on Base**. The negotiate → pay path is verified on-chain:
+      **USDC transferred, tx status `Success`.** See *On-chain proof* below.
 - [ ] **Steps 5–7** — Fallback timeout mechanism, the two base agents, hardening.
+
 
 Everything below runs **without any network or keys** thanks to `MockCapClient`.
 
 ---
 
+## On-chain proof (live run on Base)
+
+One real end-to-end paid run has settled on Base via CAP. The winning agent was
+hired through `negotiate_order → get_negotiation → pay_order`, and a real USDC
+transfer landed on-chain:
+
+| Field            | Value                                                                |
+| ---------------- | -------------------------------------------------------------------- |
+| Network          | Base mainnet                                                         |
+| Token            | Native USDC (`0x8335…2913`)                                          |
+| Tx status        | **Success**                                                          |
+| Tx hash          | `0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f` |
+| BaseScan         | `https://basescan.org/tx/0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f` |
+
+Verify independently against a Base RPC (decodes the ERC-20 `Transfer` log):
+
+```bash
+TX=0xc09e8eab0ac7eb3d8bfd17db07ed2457a37286ec313da0adefc6729e0df9d53f
+curl -s https://mainnet.base.org -X POST -H "Content-Type: application/json" \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getTransactionReceipt\",\"params\":[\"$TX\"]}" \
+  | jq '.result.status'   # -> "0x1" (Success)
+```
+
+> **Delivery vs. payment.** Payment is final on-chain the moment `pay_order`
+> confirms. The provider's *deliverable* can arrive later, within its SLA window
+> (up to ~30 min); use `scripts/repoll_delivery.py <order_id>` to re-check a
+> settled order's delivery after time has passed — a 404 right after payment does
+> **not** mean the work was never delivered.
+
+Runs carry a `mode` column (`mock` | `live`) so mock demo runs and real on-chain
+runs are never conflated in history.
+
+---
+
 ## Prerequisites
+
 
 - **Python 3.11–3.13.** Use `python3.13` if it is available.
   > **Environment note:** Python **3.14** currently ships with a broken
@@ -337,10 +371,17 @@ Croon-RFQ/
 
 ## Known limitations
 
-- **Live CAP coded but not yet run on-chain.** `LiveCapClient` is wired to the
-  real `croo-sdk`, but a real paid run needs an SDK key + USDC-funded AA wallet
-  (operator-supplied). The two base agents and the fallback timeout path arrive
-  in build-order steps 5–7. Mock mode is fully functional today.
+- **Live CAP proven with one on-chain run; not yet hardened for volume.**
+  `LiveCapClient` is wired to the real `croo-sdk` and has settled **one real
+  paid run on Base** (see *On-chain proof*). Additional live runs still need an
+  SDK key + USDC-funded AA wallet (operator-supplied). The two base agents and
+  the fallback timeout path arrive in build-order steps 5–7. Mock mode is fully
+  functional today and remains the demo-day default.
+- **Delivery may lag payment.** Payment finality and work delivery are decoupled:
+  a provider can deliver anytime within its SLA window after `pay_order`
+  confirms. Re-poll with `scripts/repoll_delivery.py` rather than treating an
+  immediate post-payment 404 as a failure.
+
 - **Scheduler is demo-grade.** A single in-process interval loop, not durable
   production cron; jobs don't survive restarts mid-run.
 - **Reputation is a placeholder** (quote confidence), not a real oracle — by
