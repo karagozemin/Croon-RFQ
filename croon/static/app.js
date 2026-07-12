@@ -19,8 +19,12 @@ const usdc = (v) => {
   return Number.isFinite(n) ? n.toFixed(2) : String(v ?? "—");
 };
 
+/* API base — same-origin by default. For static hosting (e.g. Vercel),
+   set window.CROON_API_BASE in index.html to your backend URL. */
+const API_BASE = (window.CROON_API_BASE || "").replace(/\/+$/, "");
+
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE + path, {
     headers: { "Content-Type": "application/json" },
     ...opts,
   });

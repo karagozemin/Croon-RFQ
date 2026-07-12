@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "croon/static",
+  "buildCommand": "",
+  "framework": null,
+  "rewrites": [
+    { "source": "/static/:path*", "destination": "/:path*" },
+    { "source": "/", "destination": "/index.html" }
+  ]
+}

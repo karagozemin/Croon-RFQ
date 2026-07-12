@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+croon.db
+.git/
+.gitignore
+node_modules/
+tests/
+scripts/
+*.jpg
+!croon/static/*.jpg
+.DS_Store

@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
@@ -57,6 +58,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="CROON RFQ", version="0.1.0", lifespan=lifespan)
+
+# CORS — allows the frontend to be hosted separately (e.g. Vercel) while the
+# API runs elsewhere. Same-origin serving continues to work unchanged.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # --- Serialization helpers --------------------------------------------------

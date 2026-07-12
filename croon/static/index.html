@@ -202,6 +202,12 @@ sha256:9f2ae4…</pre></div>
     </div>
   </div>
 
+  <script>
+    /* When served by FastAPI, same-origin API is used (leave empty).
+       When deployed as a static site (e.g. Vercel), set your backend URL:
+       window.CROON_API_BASE = "https://your-backend.example.com"; */
+    window.CROON_API_BASE = "";
+  </script>
   <script src="/static/app.js"></script>
 </body>
 </html>
