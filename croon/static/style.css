@@ -174,8 +174,30 @@ section.anatomy, section.proof, section.funeral { padding: 110px clamp(24px, 7vw
   display: flex; align-items: center; gap: 22px; padding: 13px 22px;
   border-bottom: 1px solid var(--hair); background: var(--ink-2);
 }
-.wordmark { font-family: var(--serif); font-size: 21px; letter-spacing: .5px; cursor: pointer; }
+.wordmark { font-family: var(--serif); font-size: 21px; letter-spacing: .5px; cursor: pointer; display: inline-flex; align-items: center; gap: 9px; }
 .wordmark span { color: var(--amber); font-style: italic; }
+
+/* brand logo */
+.logo-mark {
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  object-fit: cover;
+  display: block;
+  box-shadow: 0 0 0 1px rgba(255, 176, 32, .35), 0 0 14px rgba(255, 176, 32, .12);
+}
+.hero-logo {
+  width: 96px; height: 96px;
+  border-radius: 20px;
+  object-fit: cover;
+  margin: 0 auto 26px;
+  display: block;
+  box-shadow: 0 0 0 1px rgba(255, 176, 32, .4), 0 0 40px rgba(255, 176, 32, .18), 0 18px 50px rgba(0,0,0,.55);
+  animation: logoFloat 6s ease-in-out infinite;
+}
+@keyframes logoFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
 .cb-left { display: flex; align-items: center; gap: 14px; }
 .mode-pill { font-size: 10px; letter-spacing: 2px; border: 1px solid var(--hair-2); padding: 3px 10px; color: var(--dim); }
 .mode-pill.mock { color: var(--amber); border-color: var(--amber); }
