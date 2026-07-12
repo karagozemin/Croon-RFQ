@@ -6,9 +6,8 @@ pydantic-settings>=2.2
 httpx>=0.27
 python-dotenv>=1.0
 
-# Live mode only (CROON_CAP_MODE=live). Not needed for the mock demo.
-# Official CROO CAP Python SDK — imported lazily inside LiveCapClient, so
-# mock mode works without it installed. Install explicitly when going live:
-#   pip install croo-sdk
-# croo-sdk>=0.1
+# Official CROO CAP Python SDK — required for live mode; imported lazily so
+# mock mode also works. If it fails at runtime, FailoverCapClient drops to mock.
+croo-sdk>=0.2.1
+
 

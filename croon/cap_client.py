@@ -624,13 +624,81 @@ def _attr(obj: object, *names: str, default: object = "__RAISE__") -> object:
 
 
 # =============================================================================
+# FailoverCapClient — live first, automatic mock fallback (demo resilience)
+# =============================================================================
+
+
+class FailoverCapClient(CapClient):
+    """Live-first CAP client with automatic mock fallback.
+
+    Every call is attempted against the real LiveCapClient first. If the live
+    SDK raises for ANY reason (network down, key revoked, provider offline,
+    insufficient balance, SDK drift...), the same call is transparently
+    retried against MockCapClient so a demo/run never hard-fails.
+
+    `degraded` reflects whether the MOST RECENT live call failed over — the
+    /health endpoint surfaces it so you can see at a glance that the app is
+    running on mock data.
+    """
+
+    def __init__(self, live: CapClient, mock: CapClient) -> None:
+        self._live = live
+        self._mock = mock
+        self.degraded = False
+
+    async def _call(self, method: str, *args, **kwargs):
+        try:
+            result = await getattr(self._live, method)(*args, **kwargs)
+            self.degraded = False
+            return result
+        except Exception as exc:  # noqa: BLE001 — failover must catch everything
+            self.degraded = True
+            _log.warning(
+                "live CAP %s failed (%s: %s) — falling back to mock",
+                method, type(exc).__name__, exc,
+            )
+            return await getattr(self._mock, method)(*args, **kwargs)
+
+    async def discover_agents(
+        self, category: str | None, limit: int
+    ) -> list[AgentInfo]:
+        return await self._call("discover_agents", category, limit)
+
+    async def request_quote(
+        self, agent: AgentInfo, task: TaskSpec, timeout_s: int
+    ) -> Quote | None:
+        return await self._call("request_quote", agent, task, timeout_s)
+
+    async def hire_and_pay(
+        self, agent: AgentInfo, task: TaskSpec, agreed_price_usdc: Decimal
+    ) -> Settlement:
+        return await self._call("hire_and_pay", agent, task, agreed_price_usdc)
+
+    async def get_delivery(self, order_id: str) -> Delivery:
+        return await self._call("get_delivery", order_id)
+
+
+# =============================================================================
 # Factory — flip the whole app with ONE env var (CROON_CAP_MODE)
 # =============================================================================
 
 
 def build_cap_client(settings: Settings | None = None) -> CapClient:
-    """Return the CapClient implied by CROON_CAP_MODE (demo-day safety net)."""
+    """Return the CapClient implied by CROON_CAP_MODE.
+
+    live mode is RESILIENT: the live client is wrapped in FailoverCapClient so
+    any live failure (startup OR per-call) automatically falls back to mock.
+    """
     settings = settings or get_settings()
     if settings.is_live:
-        return LiveCapClient(settings)
+        try:
+            live = LiveCapClient(settings)
+        except Exception as exc:  # missing key / SDK not installed / etc.
+            _log.warning(
+                "live CAP unavailable at startup (%s: %s) — running on MOCK",
+                type(exc).__name__, exc,
+            )
+            return MockCapClient()
+        return FailoverCapClient(live, MockCapClient())
     return MockCapClient()
+

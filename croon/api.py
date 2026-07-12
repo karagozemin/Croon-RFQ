@@ -233,11 +233,21 @@ def get_run(run_id: str, session: Session = Depends(get_session)) -> dict:
 def health() -> dict:
     s = get_settings()
     provider = getattr(app.state, "provider", None)
+    cap = getattr(app.state, "cap", None)
+    # cap_degraded=True -> live CAP's last call failed and we're serving from
+    # the mock fallback (see FailoverCapClient).
+    degraded = bool(getattr(cap, "degraded", False))
+    effective = s.cap_mode
+    if s.is_live and type(cap).__name__ == "MockCapClient":
+        effective = "mock (live unavailable at startup)"
     return {
         "status": "ok",
         "cap_mode": s.cap_mode,
+        "cap_effective": effective,
+        "cap_degraded": degraded,
         "provider": provider.status() if provider is not None else {"enabled": False},
     }
+
 
 
 
